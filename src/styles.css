@@ -1,0 +1,309 @@
+/**
+ * styles.css — Global stylesheet for aterm.
+ *
+ * Stack: Tailwind CSS 4 via @import "tailwindcss" (processed by @tailwindcss/vite),
+ * plus hand-written overrides for the frameless tabbar (38px), xterm terminal,
+ * scrollbars, and Tauri drag regions. Every !important is intentional to override
+ * Tailwind's preflight and xterm's inline styles without increasing specificity.
+ *
+ * Key fix history:
+ * - Drag: [data-tauri-drag-region] vs .no-drag (window controls, terminal never drag)
+ * - Scrollbar: moved padding from .terminal-wrapper to .xterm so viewport gutter not clipped
+ * - Resizer: flex:1 + min-height:0 instead of calc(100vh) so FitAddon + ResizeObserver resize correctly
+ */
+@import "tailwindcss";
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: #141416 !important;
+    color: #e4e4e7;
+    overflow: hidden;
+    user-select: none;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Header & Tabbar */
+#tabbar, .tabbar-container {
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  background-color: #16171a !important;
+  border-bottom: 1px solid #242529 !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 6px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+/* Drag region for Tauri window movement */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  /* Tauri requires explicit drag region; ensure WebKitGTK respects it */
+  app-region: drag;
+}
+
+/* Non-draggable elements inside drag region — terminal must NEVER be drag
+   otherwise scrollbar thumb drag is swallowed as window drag on WebKitGTK */
+button, input, select, .no-drag,
+.terminal-wrapper, .xterm, .xterm-viewport, .xterm-screen, .xterm-helpers {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* Left section containing tabs and new tab button */
+.tabbar-left {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 4px !important;
+  height: 100% !important;
+  overflow: hidden !important;
+  flex: 0 1 auto !important;
+}
+
+/* Tabs list */
+#tabs, .tabs-scroll-area {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-end !important;
+  height: 100% !important;
+  overflow-x: auto !important;
+  scrollbar-width: none !important;
+  gap: 3px !important;
+  padding-left: 2px !important;
+}
+#tabs::-webkit-scrollbar, .tabs-scroll-area::-webkit-scrollbar {
+  display: none !important;
+}
+
+/* Individual Tabby-style Tab */
+.tabby-tab {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  height: 30px !important;
+  padding: 0 10px !important;
+  max-width: 220px !important;
+  min-width: 110px !important;
+  background-color: transparent !important;
+  color: #9ca3af !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  border-top-left-radius: 6px !important;
+  border-top-right-radius: 6px !important;
+  border: 1px solid transparent !important;
+  border-bottom: none !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease-in-out !important;
+  position: relative !important;
+  user-select: none !important;
+  box-sizing: border-box !important;
+}
+
+.tabby-tab:hover {
+  background-color: #1c1d21 !important;
+  color: #e4e4e7 !important;
+}
+
+.tabby-tab.active {
+  background-color: #212226 !important;
+  color: #ffffff !important;
+  border-color: #2e3036 !important;
+  border-top-color: #3b82f6 !important; /* Subtle blue top border */
+}
+
+/* Tab index badge */
+.tab-index-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  color: #9ca3af !important;
+  background-color: rgba(255, 255, 255, 0.06) !important;
+  border-radius: 3px !important;
+  min-width: 16px !important;
+  height: 16px !important;
+  padding: 0 3px !important;
+}
+
+.tabby-tab.active .tab-index-badge {
+  color: #60a5fa !important;
+  background-color: rgba(59, 130, 246, 0.15) !important;
+}
+
+.tab-title-text {
+  flex: 1 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+/* Close button on tab */
+.tab-close-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 18px !important;
+  height: 18px !important;
+  border-radius: 4px !important;
+  border: none !important;
+  background: transparent !important;
+  color: #9ca3af !important;
+  opacity: 0.7 !important;
+  transition: opacity 0.15s ease-in-out, background-color 0.15s !important;
+  cursor: pointer !important;
+}
+
+.tabby-tab:hover .tab-close-btn,
+.tabby-tab.active .tab-close-btn {
+  opacity: 1 !important;
+}
+
+.tab-close-btn:hover {
+  background-color: rgba(255, 255, 255, 0.12) !important;
+  color: #ef4444 !important;
+}
+
+/* Right section for window action buttons */
+.window-action-cluster {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  flex-shrink: 0 !important;
+  height: 100% !important;
+  gap: 2px !important;
+  padding-right: 2px !important;
+  margin-left: auto !important;
+}
+
+/* Window Action Button */
+.window-action-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 30px !important;
+  color: #d4d4d8 !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  transition: background-color 0.15s, color 0.15s !important;
+  padding: 0 !important;
+}
+
+.window-action-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+}
+
+.window-action-btn.close-btn:hover {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+.window-action-btn svg {
+  width: 16px !important;
+  height: 16px !important;
+  stroke: currentColor !important;
+}
+
+/* Terminal wrapper container — flex:1 fills remaining viewport after 38px tabbar.
+   min-height:0 is critical for flex children to shrink below content size (classic flex bug).
+   Using flex instead of calc(100vh -38px) avoids 100vh vs window.innerHeight mismatch on
+   frameless/maximized windows and lets ResizeObserver + FitAddon size correctly. */
+#terminal-container {
+  flex: 1 1 auto !important;
+  position: relative !important;
+  background-color: #141416 !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  /* no fixed height — flex fills parent; min-height:0 allows shrinking */
+  min-height: 0 !important;
+  height: auto !important;
+}
+
+/* Each tab's terminal wrapper — padding moved to margin on .xterm so the
+   viewport's scrollbar gutter (right:0) is not clipped by wrapper padding.
+   overflow:visible ensures the absolute-positioned .xterm-viewport scrollbar
+   is hit-testable on WebKitGTK where wrapper overflow:hidden + padding=6px
+   previously put the 8px thumb exactly on the padding edge (missed hits).
+   pointer-events:auto + no-drag above guarantees thumb drag isn't swallowed. */
+.terminal-wrapper {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  /* padding moved to .xterm so gutter is not clipped */
+  padding: 0 !important;
+  background-color: #141416 !important;
+  overflow: visible !important;
+  pointer-events: auto !important;
+}
+
+.terminal-wrapper.hidden {
+  display: none !important;
+}
+
+.xterm {
+  height: 100% !important;
+  width: 100% !important;
+  /* margin replaces wrapper padding so scrollbar gutter stays flush */
+  padding: 6px !important;
+  box-sizing: border-box !important;
+}
+
+/* xterm viewport is the scroll container (position:absolute right:0 left:0 top:0 bottom:0).
+   Must be scrollable + draggable, with no-drag already set above. */
+.xterm-viewport {
+  overflow-y: scroll !important;
+  pointer-events: auto !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: #27272a transparent !important;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 8px !important;
+}
+.xterm-viewport::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: #27272a !important;
+  border-radius: 4px !important;
+}
+.xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46 !important;
+}

@@ -1,0 +1,33 @@
+[package]
+name = "aterm"
+version = "0.1.0"
+description = "aterm - modern Tauri terminal"
+authors = ["r3versein"]
+edition = "2021"
+
+[lib]
+name = "aterm_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+# Tauri core + opener plugin (file opener). `devtools` is intentionally enabled even in release
+# so you get WebKit inspector via `cargo tauri dev` — remove if you want a leaner release.
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-opener = "2"
+# Serialization for Config (camelCase via serde) and Axum JSON handlers
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# PTY backend — spawns $SHELL, master/slave pair, SIGWINCH on resize
+portable-pty = "0.8"
+# Async runtime — full = rt, net, sync, time, signal. Needed for Axum HTTP server + Tauri async_runtime
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+dirs = "5"
+libc = "0.2"
+# HTTP API (localhost only, opt-in via config). Axum 0.7 + tower-http for CORS.
+axum = { version = "0.7", features = ["json"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tower = "0.5"
