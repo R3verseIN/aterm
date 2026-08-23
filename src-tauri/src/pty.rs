@@ -311,7 +311,6 @@ pub fn close_session(id: &str) -> Result<(), String> {
 pub struct SessionMeta {
     pub id: String,
     pub pid: Option<u32>,
-    pub cwd: Option<String>,
 }
 
 /// List all active sessions (ids + pid + cwd attempt).
@@ -322,14 +321,9 @@ pub fn list_sessions() -> Vec<SessionMeta> {
     map.iter()
         .map(|(id, sess)| {
             let pid = sess.child.lock().ok().and_then(|c| c.process_id());
-            // Try cwd via /proc, ignore errors
-            let cwd = pid
-                .and_then(|p| std::fs::read_link(format!("/proc/{}/cwd", p)).ok())
-                .map(|p| p.to_string_lossy().to_string());
             SessionMeta {
                 id: id.clone(),
                 pid,
-                cwd,
             }
         })
         .collect()

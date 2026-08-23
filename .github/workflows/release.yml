@@ -93,10 +93,10 @@ jobs:
         run: |
           set -e
           TAG="continuous"
-          TITLE="Continuous Build"
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           SHA="${{ github.sha }}"
           SHORT_SHA=$(echo "$SHA" | cut -c1-7)
+          TITLE="Continuous Build — $DATE — $SHORT_SHA"
           MSG=$(git log -1 --pretty=format:"%s" || echo "${{ github.event.head_commit.message }}")
           ACTOR="${{ github.actor }}"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -122,7 +122,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: continuous
-          name: Continuous Build
           prerelease: true
           append_body: false
           generate_release_notes: false

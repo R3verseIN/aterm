@@ -32,7 +32,7 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: {
-      ignored: ["**/src-tauri/**", "**/build/**", "**/target/**"],
+      ignored: ["**/src-tauri/**", "**/build/**", "**/target/**", "**/.github/**", "**/.git/**"],
     },
   },
   envPrefix: ["VITE_"],
