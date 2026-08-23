@@ -2,6 +2,7 @@
   "name": "aterm",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "bun@1.3.13",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -18,12 +18,11 @@
 
 ## Quick Start
 
-**Prerequisites:** Rust, Node 18+ / Bun, `tauri-cli` `package.json:27`.
+**Prerequisites:** Rust, Bun (>=1.3), `tauri-cli` `package.json:27`.
 
 ```bash
-bun install        # or npm install
+bun install
 make dev           # vite 1420 + tauri dev (tauri.conf:8)
-# or: bun run tauri dev
 ```
 
 **Build:**

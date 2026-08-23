@@ -5,15 +5,15 @@ all: build-debug
 
 # Install dependencies
 install:
-	npm install
+	bun install
 
 # Run application in development mode with hot reloading
 dev:
-	npm run tauri dev
+	bun run tauri dev
 
 # Build frontend and compile release binary
 build:
-	npm run build
+	bun run build
 	cargo build --manifest-path src-tauri/Cargo.toml --release
 	@mkdir -p build/bin
 	@cp src-tauri/target/release/aterm build/bin/aterm 2>/dev/null || true
@@ -21,7 +21,7 @@ build:
 
 # Build frontend and debug binary (faster build)
 build-debug:
-	npm run build
+	bun run build
 	cargo build --manifest-path src-tauri/Cargo.toml
 	@mkdir -p build/bin
 	@cp src-tauri/target/debug/aterm build/bin/aterm
@@ -39,7 +39,7 @@ run:
 
 # Check frontend and backend code
 check:
-	npm run build
+	bun run build
 	cargo check --manifest-path src-tauri/Cargo.toml
 
 # Clean build artifacts
@@ -56,5 +56,5 @@ help:
 	@echo "  make build       - Build frontend & release binary to build/bin/aterm"
 	@echo "  make run         - Execute built aterm binary"
 	@echo "  make check       - Type check frontend & cargo check backend"
-	@echo "  make install     - Install npm dependencies"
+	@echo "  make install     - Install bun dependencies"
 	@echo "  make clean       - Remove build artifacts and cargo clean"
