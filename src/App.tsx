@@ -22,6 +22,7 @@ import { Tabbar } from "./components/Tabbar";
 import { TerminalView } from "./components/TerminalView";
 import { SettingsDrawer } from "./components/SettingsDrawer";
 import { TabContextMenu } from "./components/TabContextMenu";
+import { WindowResizeHandles } from "./components/WindowResizeHandles";
 import { Tab, ThemeColors, ThemeName } from "./types/terminal";
 import { ConfigType, parseConfig } from "./schemas/configSchema";
 import { buildAgentPrompt } from "./utils/agentPrompt";
@@ -542,7 +543,11 @@ export const App: React.FC = () => {
   const currentThemeColors = themes[config.theme] || themes["aterm-dark"];
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#141416] text-zinc-100 font-sans overflow-hidden">
+    <div className="relative flex flex-col h-screen w-screen bg-[#141416] text-zinc-100 font-sans overflow-hidden">
+      {/* Frameless resize affordance — 8 edge/corner handles (fixed, 6 px) that call
+          Tauri's native `startResizeDragging` so `decorations:false` + Wayland still
+          has a grab area. See WindowResizeHandles.tsx for direction/cursor docs. */}
+      <WindowResizeHandles />
       <Tabbar
         tabs={tabs}
         activeId={activeId}

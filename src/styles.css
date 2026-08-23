@@ -78,6 +78,20 @@ button, input, select, .no-drag,
   app-region: no-drag;
 }
 
+/* Frameless resize handles — 8 invisible strips on window edges/corners.
+   They must be `no-drag` so Tauri's drag region (Tabbar) doesn't swallow the
+   resize gesture, and they must have pointer-events:auto despite the parent
+   being pointer-events:none. See WindowResizeHandles.tsx for direction docs. */
+.resize-handle {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  /* Keep handles hit-testable even though invisible */
+  pointer-events: auto;
+  /* No background — invisible by design; add debug bg in dev if needed */
+  background: transparent;
+  /* Ensure they sit above terminal but below context menu (z-40 vs z-60) */
+}
+
 /* Left section containing tabs and new tab button */
 .tabbar-left {
   display: flex !important;
