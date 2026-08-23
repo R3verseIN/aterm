@@ -87,43 +87,31 @@ jobs:
       - name: list artifacts
         run: ls -R artifacts 2>&1 | head -n 100
 
-      - name: create or update continuous release (append body)
+      - name: create per-commit release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          TAG="continuous"
-          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          SHA="${{ github.sha }}"
-          SHORT_SHA=$(echo "$SHA" | cut -c1-7)
-          TITLE="Continuous Build — $DATE — $SHORT_SHA"
-          MSG=$(git log -1 --pretty=format:"%s" || echo "${{ github.event.head_commit.message }}")
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          DATE=$(date -u +"%Y-%m-%d")
+          TAG="dev-$DATE-$SHORT_SHA"
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          FULL_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          MSG=$(git log -1 --pretty=format:"%B" | head -c 2000 || echo "${{ github.event.head_commit.message }}")
           ACTOR="${{ github.actor }}"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          NEW_ENTRY="### $DATE — $SHORT_SHA — $MSG — by @$ACTOR — [run]($RUN_URL)"
+          NOTES="### $FULL_DATE — $TAG
 
-          # Ensure release exists
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --prerelease --title "$TITLE" --notes "$NEW_ENTRY"
-          else
-            OLD_BODY=$(gh release view "$TAG" --json body -q .body || echo "")
-            # Append, keep within 125k limit (truncate oldest if needed)
-            NEW_BODY="$OLD_BODY
+          $MSG
 
-          $NEW_ENTRY"
-            # Truncate to ~120k if too long
-            if [ ${#NEW_BODY} -gt 120000 ]; then
-              NEW_BODY=$(echo "$NEW_BODY" | tail -c 120000)
-            fi
-            gh release edit "$TAG" --title "$TITLE" --notes "$NEW_BODY"
-          fi
+          Commit: \`${{ github.sha }}\` — by @$ACTOR — [run]($RUN_URL)"
+          gh release create "$TAG" --prerelease --title "Dev Build $TAG — $FULL_DATE" --notes "$NOTES"
 
-      - name: upload to continuous release (append assets)
+      - name: upload to per-commit release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: continuous
+          tag_name: ${{ env.TAG }}
           prerelease: true
-          append_body: false
           generate_release_notes: false
           files: artifacts/**/*
         env:
