@@ -60,7 +60,17 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
         }))
         .route("/screenshot", get({
             let id = id_clone.clone();
-            move |q: axum::extract::Query<super::handlers::ScreenshotQuery>| get_screenshot_scoped(q, id.clone())
+            let app = app.clone();
+            move |q: axum::extract::Query<super::handlers::ScreenshotQuery>| {
+                let id2 = id.clone();
+                let app2 = app.clone();
+                async move {
+                    // On-demand: tell the frontend to capture this tab now.
+                    // The handler will hold (10 s) until `store_screenshot` wakes it.
+                    let _ = app2.emit(&format!("request-screenshot:{}", id2), ());
+                    get_screenshot_scoped(q, id2).await
+                }
+            }
         }))
         // Legacy compat: also expose /sessions/:id/* style if agent expects it, but scoped handlers ignore :id
         .route("/sessions/:id/output", get({
