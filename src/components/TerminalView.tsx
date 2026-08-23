@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import html2canvas from "html2canvas-pro";
 import { ConfigType } from "../schemas/configSchema";
 import { ThemeColors } from "../types/terminal";
 
@@ -208,10 +209,99 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
    * `position:absolute` for inactive prevents flex reflow; active stays
    * `position:relative flex`. See styles.css `.terminal-wrapper` for the
    * transition itself.
+   *
+   * Per-tab screenshot capture — `html2canvas` on this wrapper's DOM so
+   * `GET /screenshot` on that tab's dedicated port (`127.0.0.1:{port}` scoped to
+   * `id`) returns *that* tab's image even when it is not focused. For hidden
+   * tabs (`is-hidden` = `opacity:0`), we clone the node offscreen with
+   * `opacity:1` before capture so the image is not blank. This is the single
+   * cross-compatible screenshot way (pure WebView, no Wayland portal) — one
+   * `GET /screenshot` per tab, port is the tab id, works on Wayland/X11/macOS/Win.
+   * The PNG base64 is pushed to Rust via `store_screenshot` every ~800 ms and
+   * served instantly from the Rust cache (`server/state.rs::SCREENSHOTS`).
    */
+  useEffect(() => {
+    let cancelled = false;
+    let interval: number | null = null;
+
+    const capture = async () => {
+      const el = wrapperRef.current;
+      if (!el || cancelled) return;
+      const rect = el.getBoundingClientRect();
+      // Hidden tabs are `absolute inset-0` so they do have size, but guard anyway
+      if ((rect.width === 0 || rect.height === 0) && el.clientWidth === 0 && el.clientHeight === 0) return;
+      try {
+        // Use `onclone` to fix `opacity:0 !important` for hidden tabs (is-hidden)
+        // instead of manual `cloneNode` — html2canvas clones the document and we
+        // make the target visible in the cloned doc before rendering.
+        const canvas = await html2canvas(el, {
+          backgroundColor: themeColors.background || "#141416",
+          scale: Math.min(window.devicePixelRatio || 1, 1.5),
+          logging: false,
+          useCORS: false,
+          allowTaint: false,
+          foreignObjectRendering: false,
+          onclone: (clonedDoc) => {
+            const c = clonedDoc.querySelector(`[data-terminal-id="${id}"]`) as HTMLElement | null;
+            if (c) {
+              c.style.opacity = "1";
+              c.style.visibility = "visible";
+              c.style.position = "relative";
+            }
+          },
+        });
+        const dataUrl = canvas.toDataURL("image/png");
+        const b64 = dataUrl.split(",")[1] || "";
+        if (b64 && !cancelled) {
+          console.debug(`[screenshot] capture ${id.slice(0,8)} ${canvas.width}x${canvas.height} ${b64.length} b64`);
+          // Tauri 2 #[tauri::command] expects camelCase wire key `pngB64` for Rust `png_b64`
+          void invoke("store_screenshot", { id, pngB64: b64 }).catch((e) => {
+            const msg = String(e);
+            void invoke("report_screenshot_error", { id, error: `store failed: ${msg}` }).catch(() => {});
+            console.error("[screenshot] store failed", e);
+          });
+        }
+      } catch (e) {
+        const msg = String(e);
+        void invoke("report_screenshot_error", { id, error: `html2canvas failed: ${msg}` }).catch(() => {});
+        console.error("[screenshot] html2canvas failed", e);
+      }
+    };
+
+    // Helper to get current wrapper for the `contains` check (avoids stale closure)
+    function elForCheck(): HTMLElement | null {
+      return wrapperRef.current;
+    }
+
+    // Initial capture after xterm open + periodic refresh.
+    // Do NOT start immediately: HMR/vite reload remounts TerminalView with the
+    // *old* session `id` which is already expired in Rust `SESSIONS` (the PTY
+    // is recreated with a new UUID on reload). An immediate capture would push
+    // a PNG for an expired id, waste CPU, and spam `store_screenshot` errors.
+    // Wait 1500 ms so the new session stabilizes, and also check `document.contains`
+    // (tab still in DOM) before each capture to handle unmount/close race.
+    // No dummy 1×1: `GET /screenshot` will hold the connection up to 10 s until
+    // this real capture lands (stability > instant 200).
+    const start = window.setTimeout(() => {
+      if (!document.body.contains(elForCheck()) || cancelled) return;
+      void capture();
+      interval = window.setInterval(() => {
+        if (!document.body.contains(elForCheck()) || cancelled) return;
+        void capture();
+      }, 900);
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(start);
+      if (interval !== null) window.clearInterval(interval);
+    };
+  }, [id, themeColors.background]);
+
   return (
     <div
       ref={wrapperRef}
+      data-terminal-id={id}
       className={`terminal-wrapper ${isActive ? "is-active" : "is-hidden"}`}
       aria-hidden={!isActive}
     />

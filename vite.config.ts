@@ -22,6 +22,11 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Force pre-bundle html2canvas-pro (Tailwind 4 oklch fix) — Vite 6 caches
+  // deps in node_modules/.vite; swapping html2canvas → html2canvas-pro
+  // leaves stale html2canvas.js without --force. Explicit include ensures
+  // the new ESM is optimized correctly.
+  optimizeDeps: { include: ["html2canvas-pro"] },
   clearScreen: false,
   server: {
     port: 1420,

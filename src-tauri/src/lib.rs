@@ -81,6 +81,29 @@ fn list_shares() -> Vec<server::SharedInfo> {
     server::list_shares()
 }
 
+/// Store a per-tab PNG screenshot captured by the frontend via `html2canvas`.
+///
+/// The frontend captures each tab's xterm DOM (via `onclone` fixing `opacity:0`
+/// for hidden tabs) and pushes PNG base64 via this command. The Rust side
+/// caches it in `server::state::SCREENSHOTS` so `GET /screenshot` on that
+/// tab's dedicated port serves it, holding the connection up to 10 s until the
+/// real capture arrives (no dummy). This is the single cross-compatible way.
+#[tauri::command]
+fn store_screenshot(id: String, png_b64: String) -> Result<(), String> {
+    server::state::store_screenshot(&id, &png_b64)
+}
+
+/// Report a frontend `html2canvas` capture error for debug logs.
+///
+/// When `GET /screenshot` times out after 10 s, the handler returns `logs`
+/// including `frontend_last_error` so the agent can see why capture failed
+/// (tainted canvas, zero size, etc.) without needing browser console.
+#[tauri::command]
+fn report_screenshot_error(id: String, error: String) -> Result<(), String> {
+    server::state::report_screenshot_error(&id, error);
+    Ok(())
+}
+
 /// Load the persisted user config from `~/.config/aterm/config.json`.
 /// Never fails — returns Config::default() on missing/corrupt file.
 #[tauri::command]
@@ -137,6 +160,8 @@ pub fn run() {
             unshare_tab,
             get_share_info,
             list_shares,
+            store_screenshot,
+            report_screenshot_error,
             get_cwd,
             get_config,
             save_config

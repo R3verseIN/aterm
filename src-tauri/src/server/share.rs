@@ -10,7 +10,7 @@ use axum::{routing::{get, post}, Router};
 use tauri::{AppHandle, Emitter};
 use tower_http::cors::{Any, CorsLayer};
 
-use super::handlers::{get_cwd_scoped, get_output_scoped, health_scoped, post_input_scoped, post_resize_scoped};
+use super::handlers::{get_cwd_scoped, get_output_scoped, get_screenshot_scoped, health_scoped, post_input_scoped, post_resize_scoped};
 use super::state::{shares, SharedInfo, SharedServer};
 
 /// Share a tab's PTY on a new random high port. Idempotent — if already shared, returns existing port.
@@ -57,6 +57,10 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
         .route("/resize", post({
             let id = id_clone.clone();
             move |b: axum::Json<super::handlers::ResizeReq>| post_resize_scoped(b, id.clone())
+        }))
+        .route("/screenshot", get({
+            let id = id_clone.clone();
+            move |q: axum::extract::Query<super::handlers::ScreenshotQuery>| get_screenshot_scoped(q, id.clone())
         }))
         // Legacy compat: also expose /sessions/:id/* style if agent expects it, but scoped handlers ignore :id
         .route("/sessions/:id/output", get({
@@ -143,6 +147,8 @@ pub fn unshare_tab(id: &str) -> Result<(), String> {
         let _ = std::fs::remove_file(format!("/tmp/aterm-{}.url", short));
         println!("[aterm share] tab {} unshared (port {})", id, entry.port);
     }
+    // Evict screenshot cache (per-tab PNG) — keeps memory bounded
+    super::state::remove_screenshot(id);
     Ok(())
 }
 

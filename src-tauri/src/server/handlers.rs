@@ -6,7 +6,12 @@
 //! without needing a `:id` path param. No auth — localhost-only isolation
 //! is the capability (port is the secret).
 
-use axum::{extract::Query, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::Query,
+    http::{header, StatusCode},
+    response::IntoResponse,
+    Json,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::pty;
@@ -100,4 +105,106 @@ pub async fn get_cwd_scoped(id: String) -> impl IntoResponse {
         Ok(cwd) => Json(serde_json::json!({"cwd": cwd, "id": id})).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))).into_response(),
     }
+}
+
+/// Query for `GET /screenshot?format=png|base64` — if `format=base64`, returns
+/// JSON `{"image":"data:image/png;base64,...","id"}` for LLM data-URI vision.
+/// Otherwise returns raw `image/png` bytes (single cross-compatible way).
+#[derive(Deserialize)]
+pub struct ScreenshotQuery {
+    pub format: Option<String>,
+}
+
+/// GET /screenshot — per-tab PNG of that tab's terminal, even when not focused.
+///
+/// The frontend captures each tab's xterm DOM via `html2canvas` (on a cloned
+/// offscreen div for hidden tabs) and pushes PNG base64 via `store_screenshot`.
+/// This handler serves the cached PNG for the `id` it is scoped to (port is the
+/// tab id). No auth, localhost-only; port secrecy is the capability.
+/// Returns `404` if tab not shared, `503` if no screenshot cached yet (frontend
+/// hasn't completed its first capture loop for that tab).
+pub async fn get_screenshot_scoped(Query(q): Query<ScreenshotQuery>, id: String) -> impl IntoResponse {
+    if !crate::pty::session_exists(&id) {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "session not found"}))).into_response();
+    }
+    // Hold-till-capture: no dummy, hold the HTTP connection until the frontend's
+    // real `html2canvas` push arrives (up to 10 s as you requested). This gives
+    // full stability — the agent gets the actual pixels, not a 1×1 placeholder.
+    // The frontend captures via `onclone` (fix for `opacity:0` hidden tabs) every
+    // ~900 ms after a 1500 ms initial delay (HMR guard). If still empty after 10 s,
+    // return debug logs so the agent can see why (tainted canvas, zero size, etc.).
+    let png = if let Some(b) = crate::server::state::get_screenshot(&id) {
+        b
+    } else if let Some(b) = crate::server::state::wait_for_screenshot(id.clone(), 10).await {
+        b
+    } else {
+        // 10 s hold expired — return debug payload for AI to diagnose
+        let last_err = crate::server::state::get_last_error(&id);
+        let session_exists = crate::pty::session_exists(&id);
+        let share_exists = crate::server::state::get_share(&id).is_some();
+        let cache_empty = crate::server::state::get_screenshot(&id).is_none();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "screenshot not yet available after 10s hold — frontend has not pushed a capture for this tab",
+                "id": id,
+                "logs": {
+                    "session_exists": session_exists,
+                    "share_exists": share_exists,
+                    "cache_empty": cache_empty,
+                    "frontend_last_error": last_err.unwrap_or_else(|| "no error reported — frontend capture loop may not have started (check is-hidden onclone, wrapper size 0, or Tauri IPC blocked)".to_string()),
+                    "hint": "html2canvas onclone must set opacity:1 for [data-terminal-id] (hidden tabs use opacity:0 !important); ensure wrapper has non-zero size and store_screenshot IPC succeeds",
+                    "elapsed_ms": 10000,
+                    "port_is_tab_id": true
+                },
+                "issues": [
+                    "check browser console for [screenshot] html2canvas failed",
+                    "check Rust log for [screenshot] store for <id>",
+                    "hidden tabs are opacity:0 — onclone fix required (see TerminalView.tsx)",
+                    "wrapper size 0 — ResizeObserver not yet fitted",
+                    "Tauri IPC blocked — check capabilities for store_screenshot/report_screenshot_error"
+                ]
+            })),
+        )
+            .into_response();
+    };
+
+    // `?format=base64` for LLM data-URI vision (JSON), otherwise raw PNG binary.
+    let fmt = q.format.as_deref().unwrap_or("png");
+    if fmt == "base64" {
+        // Manual base64 encode without crate (RFC 4648). Keep zero-dep.
+        const ALPH: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::with_capacity(png.len() * 4 / 3 + 4);
+        let mut i = 0;
+        while i < png.len() {
+            let b0 = png[i] as u32;
+            let b1 = if i + 1 < png.len() { png[i + 1] as u32 } else { 0 };
+            let b2 = if i + 2 < png.len() { png[i + 2] as u32 } else { 0 };
+            let n = (b0 << 16) | (b1 << 8) | b2;
+            out.push(ALPH[((n >> 18) & 63) as usize] as char);
+            out.push(ALPH[((n >> 12) & 63) as usize] as char);
+            out.push(if i + 1 < png.len() { ALPH[((n >> 6) & 63) as usize] as char } else { '=' });
+            out.push(if i + 2 < png.len() { ALPH[(n & 63) as usize] as char } else { '=' });
+            i += 3;
+        }
+        return Json(serde_json::json!({
+            "image": format!("data:image/png;base64,{}", out),
+            "id": id,
+            "width": 0,  // reserved for future viewport size
+            "height": 0,
+        }))
+        .into_response();
+    }
+
+    // Raw PNG binary — single cross-compatible way for `curl -o term.png` and vision.
+    // Use a tuple response so Axum sets headers correctly without needing Response::builder.
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        png,
+    )
+        .into_response()
 }
