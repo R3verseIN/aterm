@@ -329,12 +329,6 @@ button, input, select, .no-drag,
   will-change: opacity;
 }
 
-/* Legacy class kept for any external reference, but no longer used for
-   tab switching (see .is-active/.is-hidden below). */
-.terminal-wrapper.hidden {
-  display: none !important;
-}
-
 /* Smooth tab cross-fade — active terminal is visible and interactive,
    inactive ones are absolutely stacked, transparent, and non-interactive so
    the cross-fade doesn't cause flex jank. Active gets higher z-index so it

@@ -62,9 +62,4 @@ export function buildAgentPrompt(opts: {
   ].join("\n");
 }
 
-/**
- * Build the plain URL for human use (Copy Terminal URL).
- */
-export function buildShareUrl(port: number): string {
-  return `http://127.0.0.1:${port}`;
-}
+

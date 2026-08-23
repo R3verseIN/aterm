@@ -245,33 +245,7 @@ export const App: React.FC = () => {
     // and, if ever listed in a deps array, cause the boot effect to loop.
   }, [config.fontSize, activeId]);
 
-  /**
-   * Boot guard — prevents the infamous "2 terminals on boot" double-spawn.
-   *
-   * Why this exists:
-   * - `src/main.tsx` wraps `<App/>` in `<React.StrictMode>` (React 18). In
-   *   development (`tauri dev` / `vite dev`), StrictMode intentionally does
-   *   mount → run effects → simulate unmount → remount → run effects again
-   *   to surface non-idempotent effects. The boot effect below does an
-   *   *effectful* IPC `invoke("create_session")` which spawns a PTY on the
-   *   Rust side (`src-tauri/src/pty.rs`). Without a guard, both mounts each
-   *   spawn a PTY, and both `setTabs(prev=>[...prev, newTab])` append, so the
-   *   user sees 2 tabs on every cold boot in dev (production has no double
-   *   invoke, but the guard is harmless there too).
-   * - HMR / Tauri webview reloads also remount `App` with `tabs=[]`, which
-   *   would otherwise orphan PTYs in the Rust `SESSIONS` map.
-   *
-   * How it works:
-   * - `hasBootedRef` is a mutable ref that survives the simulated
-   *   unmount/remount cycle within the same React tree. The first effect
-   *   sets it to `true`; the second (StrictMode's extra) mount bails out.
-   *   This is the idiomatic React docs pattern for idempotent boot effects.
-   * - We intentionally keep `[]` deps and do NOT list `handleNewTab` to avoid
-   *   an infinite loop (`handleNewTab` changes on `tabs.length`/`activeId` →
-   *   effect re-runs → creates tab → changes `tabs.length` → loop).
-   * - No cleanup is needed to kill the PTY on simulated unmount — the first
-   *   PTY should live. The second spawn is simply skipped.
-   */
+  /** StrictMode double-mount guard — `hasBootedRef` ensures `create_session` runs once. */
   const hasBootedRef = React.useRef(false);
   useEffect(() => {
     if (hasBootedRef.current) return;
@@ -484,27 +458,7 @@ export const App: React.FC = () => {
     return () => window.removeEventListener("wheel", handleWheel);
   }, [updateFontSize]);
 
-  /**
-   * Document-level middle-click paste suppression.
-   *
-   * Why document level:
-   * - On Linux/X11 (Tauri WebKitGTK), middle mouse-up pastes the PRIMARY selection
-   *   into the focused textarea. xterm moves its hidden textarea under the cursor on
-   *   auxclick (Terminal.ts:367) and then WebKit fires a native `paste` ClipboardEvent.
-   * - Previous per-wrapper capture on TerminalView missed this because: (a) the newly
-   *   active terminal's wrapper is display:none at mousedown time, (b) mouseup lands on
-   *   the tabbar drag-spacer or document, not the wrapper, and (c) the real data path is
-   *   `paste`, not `mousedown`. Blocking only mouse events left `paste` to leak.
-   * - The tab close is async (await close_session + React commit), so the suppress window
-   *   must outlive the React re-render + xterm focus (setTimeout 0).
-   *
-   * TabItem sets `window.__suppressMiddlePasteUntil = Date.now() + 900` on any middle-click
-   * close (including debounced hits). We check that timestamp here for every capture-phase
-   * mousedown/mouseup/auxclick (button===1) and for `paste` itself, and call
-   * preventDefault+stopImmediatePropagation so neither xterm's auxclick handler nor its
-   * paste handler (Clipboard.ts:43 handlePasteEvent) runs. Normal middle-paste inside
-   * the terminal still works when not suppressed.
-   */
+  /** Middle-click paste suppression — blocks PRIMARY paste after tab close. */
   useEffect(() => {
     const shouldSuppress = () =>
       Date.now() < ((window as unknown as Record<string, number>).__suppressMiddlePasteUntil ?? 0);

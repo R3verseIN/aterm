@@ -233,6 +233,19 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         void invoke("report_screenshot_error", { id, error: msg }).catch(() => {});
         return;
       }
+      // Force xterm to repaint hidden canvas (RAF throttled while opacity:0)
+      try {
+        fitAddonRef.current?.fit();
+        const term = termRef.current;
+        if (term) {
+          // Refresh all rows; xterm's renderer skips hidden tabs until forced
+          // @ts-ignore - refresh is available with allowProposedApi
+          term.refresh(0, term.rows - 1);
+        }
+      } catch {}
+      // Let xterm's double-RAF render flush before capture
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+
       try {
         const canvas = await html2canvas(el, {
           backgroundColor: themeColors.background || "#141416",
@@ -243,6 +256,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
           foreignObjectRendering: false,
           // Fix `is-hidden opacity:0 !important` — `!important` in stylesheet
           // beats plain `style.opacity="1"`, so use `setProperty` with priority.
+          // Also force xterm canvas/rows visible (they inherit visibility:hidden).
           onclone: (clonedDoc) => {
             const c = clonedDoc.querySelector(`[data-terminal-id="${id}"]`) as HTMLElement | null;
             if (c) {
@@ -252,13 +266,13 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
               c.style.setProperty("inset", "auto", "important");
               c.style.setProperty("pointer-events", "auto", "important");
               c.style.setProperty("z-index", "9999", "important");
-              // Remove the class that reapplies !important if needed
+              c.style.setProperty("transition", "none", "important");
               c.classList.remove("is-hidden");
               c.classList.add("is-active");
-              // Also force xterm children visible (they inherit visibility)
-              c.querySelectorAll(".xterm, .xterm-viewport, .xterm-screen").forEach((node) => {
+              c.querySelectorAll(".xterm, .xterm-viewport, .xterm-screen, .xterm-rows, canvas").forEach((node) => {
                 (node as HTMLElement).style.setProperty("visibility", "visible", "important");
                 (node as HTMLElement).style.setProperty("opacity", "1", "important");
+                (node as HTMLElement).style.setProperty("display", "block", "important");
               });
             }
           },

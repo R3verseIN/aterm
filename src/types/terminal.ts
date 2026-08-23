@@ -68,13 +68,4 @@ export interface ThemeColors {
   brightWhite: string;
 }
 
-/**
- * PtyDimensions — terminal grid size in character cells.
- * Used when creating a session (cols/rows derived from window size and
- * font metrics in App.handleNewTab) and when resizing via FitAddon or
- * ResizeObserver in TerminalView. The Rust side maps this to PtySize.
- */
-export interface PtyDimensions {
-  cols: number;
-  rows: number;
-}
+

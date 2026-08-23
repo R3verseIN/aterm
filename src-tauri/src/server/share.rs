@@ -65,21 +65,11 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
                 let id2 = id.clone();
                 let app2 = app.clone();
                 async move {
-                    // On-demand: tell the frontend to capture this tab now.
-                    // The handler will hold (10 s) until `store_screenshot` wakes it.
+                    // On-demand: tell the frontend to capture this tab now
                     let _ = app2.emit(&format!("request-screenshot:{}", id2), ());
                     get_screenshot_scoped(q, id2).await
                 }
             }
-        }))
-        // Legacy compat: also expose /sessions/:id/* style if agent expects it, but scoped handlers ignore :id
-        .route("/sessions/:id/output", get({
-            let id = id_clone.clone();
-            move |q: axum::extract::Query<super::handlers::OutputQuery>| get_output_scoped(q, id.clone())
-        }))
-        .route("/sessions/:id/input", post({
-            let id = id_clone.clone();
-            move |b: axum::Json<super::handlers::WriteReq>| post_input_scoped(b, id.clone())
         }))
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any));
 

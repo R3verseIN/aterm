@@ -2,15 +2,6 @@ mod config;
 mod pty;
 mod server;
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-
-/// Simple greeting command — kept from the Tauri template for sanity checks.
-/// Not used by the App but useful for `invoke("greet")` smoke tests.
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 /// Create a new PTY session and return its UUID.
 /// - cols/rows: terminal grid size derived from window size and font metrics (App.handleNewTab)
 /// - cwd: optional working directory to spawn the shell in. If Some(dir) and the path
@@ -135,23 +126,15 @@ pub fn run() {
     }
 
     tauri::Builder::default()
-        .setup(|app| {
-            // Clean stale share discovery files from a previous crash.
-            // Remove stale JSONs and /tmp aterm-* files (handles unclean shutdown).
+        .setup(|_app| {
+            // Clean stale per-tab share files from previous crash
             server::cleanup_all();
-            // Recreate shares dir for this run (cleanup_all removes stale files but keeps dir)
             if let Some(dir) = dirs::config_dir().map(|d| d.join("aterm").join("shares")) {
                 let _ = std::fs::create_dir_all(&dir);
             }
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                server::start(handle).await;
-            });
             Ok(())
         })
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
             create_session,
             write_to_session,
             resize_session,
