@@ -199,11 +199,21 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     }
   }, [isActive, id]);
 
+  /**
+   * Smooth tab switch — instead of `display:none` (non-animatable), the
+   * wrapper stays mounted with `opacity` + `visibility`. The active tab fades
+   * in (120 ms ease-out) while the inactive one fades out and becomes
+   * `pointer-events:none` so the xterm canvas isn't hit-testable. This keeps
+   * PTY buffers alive (like before) but adds a cross-fade that feels native.
+   * `position:absolute` for inactive prevents flex reflow; active stays
+   * `position:relative flex`. See styles.css `.terminal-wrapper` for the
+   * transition itself.
+   */
   return (
     <div
       ref={wrapperRef}
-      className={`terminal-wrapper ${isActive ? "" : "hidden"}`}
-      style={{ display: isActive ? "block" : "none" }}
+      className={`terminal-wrapper ${isActive ? "is-active" : "is-hidden"}`}
+      aria-hidden={!isActive}
     />
   );
 };

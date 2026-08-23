@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Settings, X } from "lucide-react";
+import { ChevronDown, Settings, X } from "lucide-react";
 import { ConfigSchema, ConfigType } from "../schemas/configSchema";
 
 /**
@@ -58,11 +58,33 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
     reset(config);
   }, [config, reset]);
 
-  // Unmount when closed — avoids rendering hidden form and prevents tab-order issues.
-  if (!isOpen) return null;
+  /**
+   * Smooth drawer mount — instead of `if (!isOpen) return null` which pops
+   * in one frame, we keep the DOM mounted and drive `transform` + `opacity`
+   * via CSS. The scrim fades (`opacity 0→1`, 200 ms ease-out) and the panel
+   * slides (`translateX(100%)→0`, 240 ms spring-like) — both GPU-composited.
+   * `pointer-events:none` when closed prevents invisible click capture. Reduced
+   * motion is handled globally in styles.css (`prefers-reduced-motion`).
+   */
+  const scrimClass = isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none";
+  const panelClass = isOpen ? "translate-x-0" : "translate-x-full";
 
   return (
-    <aside className="fixed top-[38px] right-0 w-80 h-[calc(100vh-38px)] bg-[#18191c] border-l border-zinc-800 p-5 flex flex-col gap-4 z-50 shadow-2xl">
+    <>
+      {/* Scrim — dims terminal behind drawer and closes on click. Using fixed
+          inset-0 with bg-black/30 keeps focus on the drawer without trapping
+          scroll; click-through is prevented by z-index ordering (scrim z-40,
+          drawer z-50). Fades via opacity for smooth open/close. */}
+      <div
+        className={`fixed inset-0 top-[38px] bg-black/30 z-40 transition-opacity duration-200 ease-out drawer-scrim ${scrimClass}`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <aside
+        className={`fixed top-[38px] right-0 w-80 max-w-[90vw] h-[calc(100dvh-38px)] bg-[#18191c] border-l border-zinc-800 p-5 flex flex-col gap-4 z-50 shadow-2xl transition-transform duration-240 ease-out drawer-panel will-change-transform ${panelClass}`}
+        style={{ transitionTimingFunction: "var(--ease-spring, cubic-bezier(0.32,0.72,0,1))" }}
+        aria-hidden={!isOpen}
+      >
       {/* Header with title and close button */}
       <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
         <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
@@ -78,61 +100,103 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
       </div>
 
       {/* Form: react-hook-form handles validation and submission */}
-      <form onSubmit={handleSubmit(onSave)} className="flex flex-col gap-4 flex-1">
-        <div className="flex flex-col gap-3 flex-1 overflow-y-auto">
-          {/* Theme selector — enum validated by Zod */}
+      <form onSubmit={handleSubmit(onSave)} className="flex flex-col gap-4 flex-1 min-h-0">
+        <div className="flex flex-col gap-3 flex-1 overflow-y-auto min-h-0 pr-1">
+          {/* Theme selector — enum validated by Zod. Uses appearance-none + custom
+              ChevronDown so the dark theme dropdown has a visible, consistent chevron
+              (native WebKit arrow is near-invisible on zinc-900). pr-8 + truncate
+              prevents "Aterm Dark (Tabby Style)" from clipping at w-80. */}
           <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium">
             Color Theme
-            <select
-              {...register("theme")}
-              className="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 outline-none focus:border-blue-500"
-            >
-              <option value="aterm-dark">Aterm Dark (Tabby Style)</option>
-              <option value="aterm-light">Aterm Light</option>
-              <option value="nord">Nord Theme</option>
-            </select>
+            <div className="relative">
+              <select
+                id="settings-theme"
+                {...register("theme")}
+                className="w-full appearance-none bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 pr-8 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 truncate"
+              >
+                <option value="aterm-dark">Aterm Dark (Tabby Style)</option>
+                <option value="aterm-light">Aterm Light</option>
+                <option value="nord">Nord Theme</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+            </div>
           </label>
 
           {/* Font size — numeric input with valueAsNumber so Zod receives a number, not string.
-              Validation 8..32 comes from ConfigSchema; error message shown inline. */}
-          <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium">
+              Validation 8..32 comes from ConfigSchema; error message shown inline.
+              min/max/step/inputMode clamp the native spinner and mobile keyboard;
+              [appearance:textfield] hides the unstyled WebKit inner-spin-button that
+              otherwise overlaps the input as a tiny "icon" on the right (seen in screenshot). */}
+          <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium" htmlFor="settings-fontSize">
             Font Size (px)
             <input
+              id="settings-fontSize"
               type="number"
+              min={8}
+              max={32}
+              step={1}
+              inputMode="numeric"
+              aria-invalid={!!errors.fontSize}
+              aria-describedby={errors.fontSize ? "settings-fontSize-error" : undefined}
               {...register("fontSize", { valueAsNumber: true })}
-              className="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 outline-none focus:border-blue-500"
+              className="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none placeholder:text-zinc-500 aria-[invalid=true]:border-red-500"
             />
             {errors.fontSize && (
-              <span className="text-red-400 text-[11px]">{errors.fontSize.message}</span>
+              <span id="settings-fontSize-error" className="text-red-400 text-[11px]">{errors.fontSize.message}</span>
             )}
           </label>
 
           {/* Shell path — empty means use $SHELL fallback chain on the backend
               (pty::create_session checks $SHELL → /bin/bash → /bin/sh). */}
-          <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium">
+          <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium" htmlFor="settings-shell">
             Shell Command Path
             <input
+              id="settings-shell"
               type="text"
               placeholder="/bin/bash"
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              title="Empty uses $SHELL → /bin/bash → /bin/sh fallback on the backend"
               {...register("shell")}
-              className="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 outline-none focus:border-blue-500"
+              className="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono placeholder:text-zinc-500 truncate"
             />
+            <span className="text-[11px] text-zinc-500">Empty uses $SHELL fallback</span>
           </label>
 
           {/* Font family — freeform CSS font-family string, live-applied via
-              TerminalView's term.options.fontFamily mutation. */}
-          <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium">
+              TerminalView's term.options.fontFamily mutation. The value is often
+              long ('JetBrains Mono','Fira Code','Cascadia Code', monospace) so we
+              use font-mono + truncate + title for hover, and allow horizontal scroll
+              without wrapping. Previously the input clipped without ellipsis. */}
+          <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium" htmlFor="settings-fontFamily">
             Font Family
             <input
+              id="settings-fontFamily"
               type="text"
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              placeholder="JetBrains Mono, monospace"
               {...register("fontFamily")}
-              className="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 outline-none focus:border-blue-500"
+              className="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono placeholder:text-zinc-500 truncate"
+              title={config.fontFamily}
             />
           </label>
         </div>
 
-        {/* Save action — validates then calls onSave which persists via invoke("save_config") */}
-        <div className="pt-3 border-t border-zinc-800 flex gap-2">
+        {/* Save action — sticky bottom bar so it stays visible even when the form
+            scrolls. Previously flex-1 + border-t scrolled away; now sticky with
+            mt-auto + bg matching the drawer prevents overlap. Includes Cancel
+            (ghost) + Save (primary) for explicit discard vs commit. */}
+        <div className="sticky bottom-0 mt-auto pt-3 border-t border-zinc-800 flex gap-2 bg-[#18191c]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold py-2 px-3 rounded-md transition-colors"
+          >
+            Cancel
+          </button>
           <button
             type="submit"
             className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold py-2 px-3 rounded-md transition-colors"
@@ -142,5 +206,6 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
         </div>
       </form>
     </aside>
+    </>
   );
 };

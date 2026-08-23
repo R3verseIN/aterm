@@ -13,6 +13,20 @@
  */
 @import "tailwindcss";
 
+/**
+ * Motion tokens — single source for duration/easing across the app.
+ * Every !important transition below references these so the whole app feels
+ * consistent. Durations stay <300 ms to feel snappy on WebKitGTK/Tauri.
+ * Reduced-motion disables them (see @media at bottom).
+ */
+:root {
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-fast: 140ms;
+  --dur-med: 240ms;
+  --dur-slow: 320ms;
+}
+
 @layer base {
   * {
     box-sizing: border-box;
@@ -27,6 +41,8 @@
     color: #e4e4e7;
     overflow: hidden;
     user-select: none;
+    /* Theme switches (aterm-dark↔nord) fade the canvas background instead of flashing */
+    transition: background-color 200ms var(--ease-out);
   }
 }
 
@@ -118,7 +134,8 @@ button, input, select, .no-drag,
   display: none !important;
 }
 
-/* Individual Tabby-style Tab */
+/* Individual Tabby-style Tab — GPU-friendly transitions only (no `all`)
+   so tab add/remove and hover don't trigger layout thrash. */
 .tabby-tab {
   display: inline-flex !important;
   align-items: center !important;
@@ -136,10 +153,16 @@ button, input, select, .no-drag,
   border: 1px solid transparent !important;
   border-bottom: none !important;
   cursor: pointer !important;
-  transition: all 0.15s ease-in-out !important;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out) !important;
   position: relative !important;
   user-select: none !important;
   box-sizing: border-box !important;
+  will-change: background-color, transform;
 }
 
 .tabby-tab:hover {
@@ -193,8 +216,12 @@ button, input, select, .no-drag,
   background: transparent !important;
   color: #9ca3af !important;
   opacity: 0.7 !important;
-  transition: opacity 0.15s ease-in-out, background-color 0.15s !important;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out) !important;
   cursor: pointer !important;
+  will-change: transform, opacity;
 }
 
 .tabby-tab:hover .tab-close-btn,
@@ -205,6 +232,9 @@ button, input, select, .no-drag,
 .tab-close-btn:hover {
   background-color: rgba(255, 255, 255, 0.12) !important;
   color: #ef4444 !important;
+}
+.tab-close-btn:active {
+  transform: scale(0.92) !important;
 }
 
 /* Right section for window action buttons */
@@ -219,7 +249,7 @@ button, input, select, .no-drag,
   margin-left: auto !important;
 }
 
-/* Window Action Button */
+/* Window Action Button — add scale feedback on press */
 .window-action-btn {
   display: inline-flex !important;
   align-items: center !important;
@@ -231,8 +261,12 @@ button, input, select, .no-drag,
   border: none !important;
   border-radius: 4px !important;
   cursor: pointer !important;
-  transition: background-color 0.15s, color 0.15s !important;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out) !important;
   padding: 0 !important;
+  will-change: transform, background-color;
 }
 
 .window-action-btn:hover {
@@ -240,6 +274,9 @@ button, input, select, .no-drag,
   color: #ffffff !important;
 }
 
+.window-action-btn:active {
+  transform: scale(0.94) !important;
+}
 .window-action-btn.close-btn:hover {
   background-color: #dc2626 !important;
   color: #ffffff !important;
@@ -266,6 +303,8 @@ button, input, select, .no-drag,
   /* no fixed height — flex fills parent; min-height:0 allows shrinking */
   min-height: 0 !important;
   height: auto !important;
+  /* Theme switches fade instead of flashing */
+  transition: background-color 200ms var(--ease-out) !important;
 }
 
 /* Each tab's terminal wrapper — padding moved to margin on .xterm so the
@@ -285,10 +324,35 @@ button, input, select, .no-drag,
   background-color: #141416 !important;
   overflow: visible !important;
   pointer-events: auto !important;
+  /* Tab switch cross-fade — see App.tsx terminal map (opacity transition) */
+  transition: opacity var(--dur-fast) var(--ease-out) !important;
+  will-change: opacity;
 }
 
+/* Legacy class kept for any external reference, but no longer used for
+   tab switching (see .is-active/.is-hidden below). */
 .terminal-wrapper.hidden {
   display: none !important;
+}
+
+/* Smooth tab cross-fade — active terminal is visible and interactive,
+   inactive ones are absolutely stacked, transparent, and non-interactive so
+   the cross-fade doesn't cause flex jank. Active gets higher z-index so it
+   paints above inactive siblings even when inactive is later in DOM. */
+.terminal-wrapper.is-active {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+.terminal-wrapper.is-hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 0 !important;
 }
 
 .xterm {
@@ -320,4 +384,31 @@ button, input, select, .no-drag,
 }
 .xterm-viewport::-webkit-scrollbar-thumb:hover {
   background: #3f3f46 !important;
+}
+
+/* Tab enter/exit — new tabs grow in width instead of popping at full 220px */
+@keyframes tab-in {
+  from { max-width: 0; opacity: 0; transform: translateY(2px); }
+  to { max-width: 220px; opacity: 1; transform: translateY(0); }
+}
+.tabby-tab {
+  animation: tab-in var(--dur-med) var(--ease-spring) both;
+}
+
+/* Shared drawer & context menu — starting states (see components for .open) */
+.drawer-panel {
+  will-change: transform;
+}
+.drawer-scrim {
+  will-change: opacity;
+}
+
+/* Respect user motion preferences — REQUIRED for a11y (WCAG 2.3.3) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -67,11 +67,26 @@ export const TabContextMenu: React.FC<TabContextMenuProps> = ({
 
   const isShared = port !== null && url !== null;
 
+  /**
+   * Entrance animation — the menu should feel like it grows from the click
+   * point, not pop. We use a lightweight CSS keyframe (no deps) with
+   * `opacity 0→1` + `scale 0.96→1` + `translateY 4px→0` over 140 ms ease-out.
+   * This is GPU-composited (transform+opacity) and respects
+   * `prefers-reduced-motion` via styles.css which collapses durations.
+   */
+  const [isOpen, setIsOpen] = React.useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setIsOpen(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   return (
     <div
       ref={ref}
       style={style}
-      className="w-56 bg-[#18191c] border border-zinc-800 rounded-md shadow-2xl py-1 flex flex-col"
+      className={`w-56 bg-[#18191c] border border-zinc-800 rounded-md shadow-2xl py-1 flex flex-col will-change-transform transition-all duration-100 ease-out ${
+        isOpen ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 translate-y-1"
+      }`}
       role="menu"
     >
       {!isShared ? (

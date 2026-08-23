@@ -19,16 +19,18 @@ pub struct OutputQuery {
     pub limit: Option<usize>,
 }
 
-/// Retained for documentation — the per-tab `GET /output` currently builds
-/// JSON inline via `json!({"data", "next_offset", "total", "truncated", "id"})`
-/// so this struct is unused but kept to document the intended shape.
-#[allow(dead_code)]
+/// Typed response for `GET /output?since=0&limit=…` — used by `get_output_scoped`.
+///
+/// This struct documents and enforces the wire shape. Previously built via
+/// `json!` inline, it was flagged `dead_code` by the IDE/cargo. Now it is
+/// constructed directly so `#[warn(dead_code)]` stays clean without an allow.
 #[derive(Serialize)]
 struct OutputResp {
     data: String,
     next_offset: usize,
     total: usize,
     truncated: bool,
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -61,13 +63,15 @@ pub async fn get_output_scoped(Query(q): Query<OutputQuery>, id: String) -> impl
     match pty::get_output_since(&id, since, limit) {
         Ok((bytes, next, total)) => {
             let data = String::from_utf8_lossy(&bytes).to_string();
-            Json(serde_json::json!({
-                "data": data,
-                "next_offset": next,
-                "total": total,
-                "truncated": next < total,
-                "id": id,
-            }))
+            // Use the typed OutputResp struct so the shape is checked at compile time
+            // and the IDE/cargo `dead_code` lint stays green without `#[allow]`.
+            Json(OutputResp {
+                data,
+                next_offset: next,
+                total,
+                truncated: next < total,
+                id,
+            })
             .into_response()
         }
         Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))).into_response(),

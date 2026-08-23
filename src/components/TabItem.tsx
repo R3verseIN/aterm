@@ -1,5 +1,5 @@
 import React from "react";
-import { X } from "lucide-react";
+import { Radio, X } from "lucide-react";
 import { Tab } from "../types/terminal";
 
 /**
@@ -9,8 +9,11 @@ import { Tab } from "../types/terminal";
  * - isActive: whether this tab is the currently selected tab
  * - isShared: whether this tab is currently exposed via per-tab HTTP Share
  *   (right-click Share binds 127.0.0.1:0, port is the capability). When true
- *   a small green dot is shown before the title and the context menu offers
- *   Copy URL / Copy Prompt / Unshare instead of Share.
+ *   a Radio (broadcast) icon is shown before the title instead of a generic dot
+ *   and the context menu offers Copy URL / Copy Prompt / Unshare instead of Share.
+ *   Radio was chosen over green dot because a color-only dot fails WCAG contrast
+ *   and is ambiguous at 8 px; the Radio glyph is explicit "on-air / broadcasting"
+ *   (like VS Code Live Share) and remains legible at 14 px with emerald-500.
  * - sharePort: the random high port if shared (e.g., 42817), or null. Shown
  *   in debug title tooltip as `:{port}` for quick `curl` reference.
  * - onSelect: callback invoked on left-click to activate the tab
@@ -175,14 +178,20 @@ export const TabItem: React.FC<TabItemProps> = ({
     >
       {/* Numeric badge showing 1-based tab index */}
       <span className="tab-index-badge">{index + 1}</span>
-      {/* Shared indicator — green dot when this tab is exposed via 127.0.0.1:{port}.
-          The port itself is the capability (no auth, localhost only). */}
+      {/* Shared indicator — Radio (broadcast) icon when this tab is exposed via
+          127.0.0.1:{port}. Replaces the old w-2 h-2 emerald dot which was only
+          8 px, color-only (WCAG fail), and ambiguous. Radio at 14 px with
+          emerald-500 is legible even when multiple tabs are shared and keeps
+          the port in the tooltip for `curl` convenience. */}
       {isShared && (
         <span
-          className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0"
           title={`Shared on :${sharePort}`}
-          aria-label="Shared"
-        />
+          aria-label={`Shared on :${sharePort}`}
+          role="img"
+          className="flex-shrink-0 inline-flex"
+        >
+          <Radio className="w-3.5 h-3.5 text-emerald-500" aria-hidden="true" />
+        </span>
       )}
       {/* Tab title, falls back to generic label if empty */}
       <span className="tab-title-text">{tab.title || `Terminal ${index + 1}`}</span>
