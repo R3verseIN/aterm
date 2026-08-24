@@ -69,8 +69,22 @@ pub async fn get_output_scoped(id: String) -> impl IntoResponse {
 }
 
 /// POST /input {"data":"ls\n"} — write into the PTY master (same as xterm onData).
+/// Stable: auto-normalizes trailing newline for agent stability. xterm onData sends \r for Enter,
+/// but JSON docs use \n. Handles both, and auto-appends \r if missing to avoid ghost blue cursor hang.
 pub async fn post_input_scoped(Json(req): Json<WriteReq>, id: String) -> impl IntoResponse {
-    match pty::write_to_session(&id, &req.data) {
+    let mut data = req.data.clone();
+    // Normalize line endings to \r (canonical Enter) and auto-append if missing
+    if data.ends_with("\r\n") {
+        data.pop(); // strip \n, keep \r
+    } else if data.ends_with('\n') {
+        data.pop();
+        data.push('\r');
+    } else if !data.ends_with('\r') && !data.ends_with('\x03') && !data.ends_with('\x04') && !data.ends_with('\x1a') && !data.is_empty() {
+        // No terminator — auto-append \r to prevent ghost "pwd; ls" line-buffer hang
+        // Only for data that looks like a command (avoid appending to raw escape sequences)
+        data.push('\r');
+    }
+    match pty::write_to_session(&id, &data) {
         Ok(_) => Json(serde_json::json!({"ok": true})).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))).into_response(),
     }

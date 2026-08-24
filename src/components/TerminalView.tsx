@@ -134,6 +134,11 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         } catch {}
       }
       term.write(p);
+      try {
+        // Keep viewport pinned to bottom after burst HTTP writes — fixes top hidden after bulk ls
+        // @ts-ignore - scrollToBottom is available with scrollback
+        term.scrollToBottom();
+      } catch {}
     }).then((fn) => {
       unlistenData = fn;
     }).catch(console.error);
@@ -143,6 +148,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     listen(`clear-terminal:${id}`, () => {
       try {
         term.clear();
+        // @ts-ignore
+        term.scrollToBottom();
       } catch {}
     }).then((fn) => {
       unlistenClear = fn;
