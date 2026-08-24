@@ -86,8 +86,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       fontFamily: config.fontFamily || "'JetBrains Mono', 'Fira Code', monospace",
       theme: themeColors,
       cursorBlink: true,
+      lineHeight: 1.0,
       allowProposedApi: true,
-      smoothScrollDuration: 100,
       scrollback: config.scrollback ?? 1500,
       scrollOnUserInput: true,
     });
@@ -99,7 +99,16 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
 
     // Attach the terminal to the DOM and fit to container size
     term.open(wrapperRef.current);
-    fitAddon.fit();
+    const doFit = () => {
+      try {
+        fitAddon.fit();
+      } catch {}
+    };
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(doFit).catch(doFit);
+    } else {
+      doFit();
+    }
 
     // Forward user keystrokes to the PTY (Rust handles actual shell input)
     const dataDisposable = term.onData((data: string) => {
@@ -149,12 +158,13 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
 
     // Watch wrapper size (window resize, font zoom, drawer open, window maximize) and resize PTY.
     // Debounced via requestAnimationFrame to avoid fighting scrollbar thumb drag (fit() mutates
-    // scrollTop). Also guards isActive: hidden wrappers have 0 size and would compute 0 cols.
+    // scrollTop).
     let rafId: number | null = null;
     const resizeObserver = new ResizeObserver(() => {
+      // Hidden tabs are absolute opacity:0 but still have size — skip to avoid corrupting inactive PTY rows
+      if (wrapperRef.current?.classList.contains("is-hidden")) return;
       if (rafId !== null) cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
-        // Only fit when visible — hidden tabs have 0 dimensions and would send 0x0 to PTY
         const el = wrapperRef.current;
         if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
         try {
@@ -195,27 +205,41 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     if (config.fontFamily) {
       termRef.current.options.fontFamily = config.fontFamily;
     }
-    try {
-      fitAddonRef.current.fit();
-    } catch {}
+    const doFit = () => {
+      try {
+        fitAddonRef.current?.fit();
+      } catch {}
+    };
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(doFit).catch(doFit);
+    } else {
+      doFit();
+    }
   }, [config, themeColors]);
 
   // When this tab becomes active (was hidden via display:none), re-fit and focus.
-  // Hidden terminals have 0 dimensions until shown, so we recompute and notify Rust.
+  // Wait for fade transition (140ms) + fonts to avoid measuring transitional height → clipped top / huge gap.
   useEffect(() => {
     if (isActive && termRef.current && fitAddonRef.current) {
       setTimeout(() => {
-        try {
-          fitAddonRef.current?.fit();
-          const dims = fitAddonRef.current?.proposeDimensions();
-          if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows) && dims.cols > 0 && dims.rows > 0) {
-            const cols = Math.floor(dims.cols);
-            const rows = Math.floor(dims.rows);
-            invoke("resize_session", { id, cols, rows }).catch(console.error);
-          }
-        } catch {}
-        termRef.current?.focus();
-      }, 0);
+        const fitNow = () => {
+          try {
+            fitAddonRef.current?.fit();
+            const dims = fitAddonRef.current?.proposeDimensions();
+            if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows) && dims.cols > 0 && dims.rows > 0) {
+              const cols = Math.floor(dims.cols);
+              const rows = Math.floor(dims.rows);
+              invoke("resize_session", { id, cols, rows }).catch(console.error);
+            }
+          } catch {}
+          termRef.current?.focus();
+        };
+        if (document.fonts?.ready) {
+          document.fonts.ready.then(fitNow).catch(fitNow);
+        } else {
+          fitNow();
+        }
+      }, 160);
     }
   }, [isActive, id]);
 
