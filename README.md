@@ -65,13 +65,14 @@ cargo check --manifest-path src-tauri/Cargo.toml
 | Method | Path | Notes `handlers.rs` | Example |
 |---|---|---|---|
 | `GET` | `/health` | `{version,id,alive,pid}` `:53` | `curl http://127.0.0.1:{port}/health` |
-| `GET` | `/output?since=0&limit=32768` | `{data,next_offset,total,truncated,id}` `default 32KB max 256KB` `:65` | `curl "$BASE/output?since=$NEXT" \| jq -r .data` |
-| `POST` | `/input` | `{"data":"ls -la\n"}` `\n/\r Enter \x03 Ctrl-C` `:87` | `curl -X POST -H "Content-Type: application/json" -d '{"data":"ls\n"}' $BASE/input` |
-| `GET` | `/cwd` | `{cwd,id}` ` /proc/<pid>/cwd` `:103` | `curl $BASE/cwd` |
-| `POST` | `/resize` | `{"cols":80,"rows":24}` `:95` | `curl -X POST -d '{"cols":100,"rows":30}' $BASE/resize` |
-| `GET` | `/screenshot` | `image/png` or `?format=base64 → {image:"data:image/png;base64,...",id}` hold `10s` `state.rs:167` `share.rs:61` `request-screenshot:{id}` | `curl $BASE/screenshot -o /tmp/term.png && file /tmp/term.png` |
+| `GET` | `/output` | `{data,total,id}` dump-all `512KB` `no-store` `:66` | `curl "$BASE/output" \| jq -r .data \| tail -n 100` |
+| `POST` | `/input` | `{"data":"ls -la\n"}` `\n/\r Enter \x03 Ctrl-C` `:79` | `curl -X POST -H "Content-Type: application/json" -d '{"data":"ls\n"}' $BASE/input` |
+| `POST` | `/clear` | `{"ok":true,"cleared":true,id}` wipes `512KB` ring+waiters `:95` | `curl -X POST $BASE/clear` |
+| `GET` | `/cwd` | `{cwd,id}` ` /proc/<pid>/cwd` `:107` | `curl $BASE/cwd` |
+| `POST` | `/resize` | `{"cols":80,"rows":24}` `:87` | `curl -X POST -d '{"cols":100,"rows":30}' $BASE/resize` |
+| `GET` | `/screenshot` | `image/png` or `?format=base64 → {image:"data:image/png;base64,...",id}` fresh hold `10s` `state.rs:149` `share.rs:78` `request-screenshot:{id}` | `curl --max-time 15 $BASE/screenshot -o /tmp/term.png && file /tmp/term.png` |
 
-Poll `since = next_offset`; if `truncated` re-fetch. Limit capped `256KB`.
+`GET /output` is dump-all `512KB` no `since` — poll `GET /output` and diff `data` (strip ANSI). `POST /clear` before large output.
 
 ## Discovery Files
 
@@ -87,11 +88,12 @@ Cleaned on startup `lib.rs:131` / `share.rs:166` `cleanup_all`.
 Right-click tab → **Share terminal** → `Copy Terminal URL` `App:339` (`http://127.0.0.1:{port}`) or **Copy Agent Prompt** `App:354` (`buildAgentPrompt.ts:19` markdown `BASE_URL/PORT/SESSION_ID` `RULES` `API` `WORKFLOW` `EXAMPLE` `SAFETY` — hot-reloads Vite `9`).
 
 **Workflow `agentPrompt:48`:**
-1. `GET /output?since=0` text
+1. `GET /output` text (strip ANSI, check `total`)
 2. `POST /input` command
-3. `poll /output?since=<next>` till idle
+3. `poll /output` dump-all till idle (stable 2×)
 4. `GET /screenshot` even when not focused (port is that tab) — vision/docs
-5. Repeat
+5. `POST /clear` when fresh buffer needed
+6. Repeat
 
 `GET /screenshot` holds `10s` via `oneshot` `state.rs:136` until `html2canvas-pro` `TerminalView:237` `store_screenshot` `pngB64` wakes it; on timeout `503` with `logs: {session_exists, share_exists, cache_empty, frontend_last_error, hint}` `handlers.rs:142`.
 
