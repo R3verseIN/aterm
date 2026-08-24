@@ -1,3 +1,5 @@
+use tauri::Emitter;
+
 mod config;
 mod pty;
 mod server;
@@ -95,6 +97,17 @@ fn report_screenshot_error(id: String, error: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Clear terminal output history for a tab — straightforward API for agents/UI.
+/// Drains the 512KB OUTPUTS ring, bumps generation, and invalidates screenshot.
+/// No stale logs after this; next `GET /output?since=0` returns empty.
+/// Also emits `clear-terminal:{id}` so the frontend xterm clears viewport + scrollback.
+#[tauri::command]
+fn clear_terminal(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    pty::clear_output(&id)?;
+    let _ = app.emit(&format!("clear-terminal:{}", id), ());
+    Ok(())
+}
+
 /// Load the persisted user config from `~/.config/aterm/config.json`.
 /// Never fails — returns Config::default() on missing/corrupt file.
 #[tauri::command]
@@ -145,6 +158,7 @@ pub fn run() {
             list_shares,
             store_screenshot,
             report_screenshot_error,
+            clear_terminal,
             get_cwd,
             get_config,
             save_config

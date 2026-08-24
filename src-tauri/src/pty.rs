@@ -33,6 +33,11 @@ static SESSIONS: OnceLock<Mutex<HashMap<String, Session>>> = OnceLock::new();
 /// The HTTP `GET /sessions/{id}/output?since=OFFSET` reads from here.
 static OUTPUTS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
 
+/// Per-session generation counter — bumped on every explicit clear so
+/// `GET /output` clients can detect that `since` offsets are invalidated.
+/// Even after a clear, `total` resets to 0, so old `since` values must be discarded.
+static OUTPUT_GENERATIONS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+
 /// Accessor for the global SESSIONS map, initializing it on first call.
 fn sessions() -> &'static Mutex<HashMap<String, Session>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -42,8 +47,56 @@ fn outputs() -> &'static Mutex<HashMap<String, Vec<u8>>> {
     OUTPUTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn output_generations() -> &'static Mutex<HashMap<String, u64>> {
+    OUTPUT_GENERATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Returns true if `data` contains a terminal clear sequence that should
+/// wipe the scrollback / visible screen. Covers:
+/// - `clear` (ESC[2J + ESC[H), `reset` (ESC c), Ctrl-L (0x0c),
+/// - ESC[3J (clear scrollback), ESC[2J (clear screen), ESC[H (home)
+fn contains_clear_sequence(data: &[u8]) -> bool {
+    // Fast path: 0x0c is form-feed (Ctrl-L)
+    if data.contains(&0x0c) {
+        return true;
+    }
+    // ESC c (RIS) - full reset
+    if data.windows(2).any(|w| w == [0x1b, b'c']) {
+        return true;
+    }
+    // ESC [ 2 J  or  ESC [ 3 J  or  ESC [ H  or  ESC [ 2 ; ... J etc is not needed;
+    // simple heuristic: ESC [ ... J  and ESC [ ... H
+    // We check for ESC [ 2 J and ESC [ 3 J exactly, which covers `clear` output.
+    if data.windows(4).any(|w| w == [0x1b, b'[', b'2', b'J'] || w == [0x1b, b'[', b'3', b'J']) {
+        return true;
+    }
+    // ESC [ H (home) alone is not a clear, but ESC[H + ESC[2J combo is captured above.
+    // Check for ESC [ J (no param) is also clear screen.
+    if data.windows(3).any(|w| w == [0x1b, b'[', b'J']) {
+        return true;
+    }
+    false
+}
+
 /// Append data to the history ring for a session, truncating to 512KB.
+/// Straightforward no-cache rule: if the PTY output contains a clear-screen
+/// sequence (e.g., user ran `clear` / `reset` / Ctrl-L), wipe the ring
+/// before appending so `GET /output` never serves stale pre-clear logs.
 fn append_output(id: &str, data: &[u8]) {
+    if contains_clear_sequence(data) {
+        // Auto-clear on clear sequence: bump generation and drain old logs
+        if let Ok(mut gen_map) = output_generations().lock() {
+            let e = gen_map.entry(id.to_string()).or_insert(0);
+            *e = e.wrapping_add(1);
+        }
+        if let Ok(mut map) = outputs().lock() {
+            if let Some(buf) = map.get_mut(id) {
+                buf.clear();
+            }
+        }
+        // Invalidate screenshot so next GET /screenshot is fresh, not stale image
+        crate::server::state::remove_screenshot(id);
+    }
     let mut map = match outputs().lock() {
         Ok(m) => m,
         Err(_) => return,
@@ -56,6 +109,59 @@ fn append_output(id: &str, data: &[u8]) {
         let drain = buf.len() - MAX;
         buf.drain(0..drain);
     }
+}
+
+/// Explicit clear of a session's output history (called via POST /clear or Tauri clear_terminal).
+/// Bumps generation, drains the ring, and invalidates screenshot cache.
+/// Returns error if session not found.
+pub fn clear_output(id: &str) -> Result<(), String> {
+    // Validate session exists (keeps API honest)
+    if !session_exists(id) {
+        return Err(format!("session not found: {}", id));
+    }
+    if let Ok(mut gen_map) = output_generations().lock() {
+        let e = gen_map.entry(id.to_string()).or_insert(0);
+        *e = e.wrapping_add(1);
+    }
+    if let Ok(mut map) = outputs().lock() {
+        if let Some(buf) = map.get_mut(id) {
+            buf.clear();
+        } else {
+            // No buffer yet — insert empty so generation is tracked
+            map.insert(id.to_string(), Vec::new());
+        }
+    }
+    // No stale screenshot after clear
+    crate::server::state::remove_screenshot(id);
+    Ok(())
+}
+
+pub fn get_generation(id: &str) -> u64 {
+    output_generations()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// Centralized cleanup: remove all state for a session id. Call from reader exit,
+/// close_session, and unshare_tab to keep logic straightforward and avoid leaks.
+#[allow(dead_code)]
+pub fn cleanup_state(id: &str) {
+    {
+        let mut sessions_map = sessions().lock().unwrap_or_else(|e| e.into_inner());
+        sessions_map.remove(id);
+    }
+    {
+        let mut out = outputs().lock().unwrap_or_else(|e| e.into_inner());
+        out.remove(id);
+    }
+    {
+        let mut gen = output_generations().lock().unwrap_or_else(|e| e.into_inner());
+        gen.remove(id);
+    }
+    crate::server::state::remove_screenshot(id);
 }
 
 /// Returns the current working directory of the given session's shell process.
@@ -169,6 +275,7 @@ pub fn create_session(app: AppHandle, cols: u16, rows: u16, cwd: Option<String>)
 
     // Init empty history for this session
     outputs().lock().unwrap().insert(id.clone(), Vec::new());
+    output_generations().lock().unwrap().insert(id.clone(), 0);
 
     std::thread::spawn(move || {
         let mut buf = vec![0u8; 32 * 1024];
@@ -211,14 +318,18 @@ pub fn create_session(app: AppHandle, cols: u16, rows: u16, cwd: Option<String>)
         // the per-tab HTTP server if this tab was shared. Frontend also calls
         // `close_session` on `pty:exit:{id}` but we clean here too for the case
         // where the window is already closed / frontend missed the event.
+        // Straightforward: centralized cleanup (OUTPUTS + generations + screenshot + share)
         {
-            // Use into_inner on poison to avoid permanently poisoned state
             let mut sessions_map = sessions().lock().unwrap_or_else(|e| e.into_inner());
             sessions_map.remove(&id_clone);
         }
         {
             let mut out = outputs().lock().unwrap_or_else(|e| e.into_inner());
             out.remove(&id_clone);
+        }
+        {
+            let mut gen = output_generations().lock().unwrap_or_else(|e| e.into_inner());
+            gen.remove(&id_clone);
         }
         let _ = crate::server::unshare_tab(&id_clone);
     });
@@ -276,6 +387,7 @@ pub fn resize_session(id: &str, cols: u16, rows: u16) -> Result<(), String> {
 /// Removes it from the map, tries to kill the child shell if still alive, then drops
 /// the Session (closing the PTY file descriptors). If the id is not found, returns an error.
 /// Also called implicitly when the shell exits and the reader thread emits pty:exit.
+/// Straightforward centralized cleanup: OUTPUTS + generations + screenshot + share.
 pub fn close_session(id: &str) -> Result<(), String> {
     let mut map = sessions().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(session) = map.remove(id) {
@@ -284,11 +396,14 @@ pub fn close_session(id: &str) -> Result<(), String> {
             let mut child = session.child.lock().unwrap_or_else(|e| e.into_inner());
             let _ = child.kill();
         }
-        // Also drop OUTPUTS history for this session to bound memory.
-        // The reader thread already removed it on exit; this covers explicit close.
+        // Also drop OUTPUTS history and generation for this session
         {
             let mut out = outputs().lock().unwrap_or_else(|e| e.into_inner());
             out.remove(id);
+        }
+        {
+            let mut gen = output_generations().lock().unwrap_or_else(|e| e.into_inner());
+            gen.remove(id);
         }
         // Best-effort unshare per-tab HTTP server if this tab was shared
         let _ = crate::server::unshare_tab(id);
@@ -300,6 +415,10 @@ pub fn close_session(id: &str) -> Result<(), String> {
         {
             let mut out = outputs().lock().unwrap_or_else(|e| e.into_inner());
             out.remove(id);
+        }
+        {
+            let mut gen = output_generations().lock().unwrap_or_else(|e| e.into_inner());
+            gen.remove(id);
         }
         let _ = crate::server::unshare_tab(id);
         Err(format!("session not found: {}", id))
@@ -338,13 +457,15 @@ pub fn session_exists(id: &str) -> bool {
         .contains_key(id)
 }
 
-/// Get output snapshot for HTTP polling: returns (data_bytes[from..], next_offset, total_len).
+/// Get output snapshot for HTTP polling: returns (data_bytes[from..], next_offset, total_len, generation).
 /// Poison recovery ensures polling doesn't permanently fail after a panic.
-pub fn get_output_since(id: &str, since: usize, limit: usize) -> Result<(Vec<u8>, usize, usize), String> {
+/// Generation is bumped on every clear so clients know stale `since` is invalid.
+pub fn get_output_since(id: &str, since: usize, limit: usize) -> Result<(Vec<u8>, usize, usize, u64), String> {
     let map = outputs().lock().unwrap_or_else(|e| e.into_inner());
     let buf = map.get(id).ok_or_else(|| format!("session not found: {}", id))?;
     let total = buf.len();
     let start = since.min(total);
     let end = (start + limit).min(total);
-    Ok((buf[start..end].to_vec(), end, total))
+    let gen = get_generation(id);
+    Ok((buf[start..end].to_vec(), end, total, gen))
 }

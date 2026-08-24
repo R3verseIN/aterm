@@ -58,32 +58,19 @@ pub fn get_share(id: &str) -> Option<SharedInfo> {
 }
 
 // ---------------------------------------------------------------------------
-// Screenshot cache — per-tab PNG bytes captured by the frontend via
-// `html2canvas`. This makes `GET /screenshot` work for *any* tab by `id`,
-// even when that tab is not the focused one (hidden tabs are `opacity:0`
-// but the frontend clones them offscreen before capture). The port is the
-// capability, so the cache is keyed by `id` (UUID). No auth, localhost only.
+// Screenshot — fresh-only, no cache. Every GET /screenshot triggers a
+// fresh html2canvas capture via `request-screenshot:{id}` and holds the
+// HTTP connection until the frontend pushes via `store_screenshot`.
+// No persistent cache: stale images are never served. We just rendezvous
+// via oneshot waiters. Straightforward, no instant stale path.
 // ---------------------------------------------------------------------------
 
-/// In-memory PNG cache: `id -> Vec<u8>` (PNG bytes). Written by the frontend
-/// via `invoke("store_screenshot")`, read by `GET /screenshot` on that tab's
-/// dedicated port. Evicted on `unshare_tab` / `close_session`.
-static SCREENSHOTS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
-
-fn screenshots() -> &'static Mutex<HashMap<String, Vec<u8>>> {
-    SCREENSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 /// Store a PNG screenshot for a tab (called from Tauri command `store_screenshot`).
-/// `png_b64` is a base64-encoded PNG (from `canvas.toDataURL().split(",")[1]`).
-/// Stored as raw bytes to serve as `image/png` without re-decode per request.
+/// Decodes base64 and wakes any `GET /screenshot` waiters holding the connection.
+/// No persistent cache — purely a rendezvous to keep logic fresh-only.
 pub fn store_screenshot(id: &str, png_b64: &str) -> Result<(), String> {
     let bytes = base64_decode(png_b64)?;
     println!("[screenshot] store for {}: {} bytes b64 -> {} bytes png", id, png_b64.len(), bytes.len());
-    {
-        let mut map = screenshots().lock().unwrap_or_else(|e| e.into_inner());
-        map.insert(id.to_string(), bytes.clone());
-    }
     // Wake any `GET /screenshot` handlers holding a wait for this id (10 s hold)
     if let Some(waiters_vec) = waiters()
         .lock()
@@ -102,18 +89,16 @@ pub fn store_screenshot(id: &str, png_b64: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Retrieve a PNG screenshot for a tab, if cached.
-/// Returns `None` if no screenshot has been pushed yet (frontend hasn't run
-/// its periodic `html2canvas` capture loop for that tab).
-pub fn get_screenshot(id: &str) -> Option<Vec<u8>> {
-    let map = screenshots().lock().unwrap_or_else(|e| e.into_inner());
-    map.get(id).cloned()
+/// Retrieve a PNG screenshot — deprecated fresh-only mode returns None always
+/// to avoid stale serving. Kept for 503 debug logging compatibility.
+#[allow(dead_code)]
+pub fn get_screenshot(_id: &str) -> Option<Vec<u8>> {
+    None
 }
 
-/// Remove a tab's cached screenshot (on unshare/close).
+/// Remove a tab's pending screenshot waiters/errors (on clear/unshare/close).
+/// No persistent image cache to clear — just waiters and error logs.
 pub fn remove_screenshot(id: &str) {
-    let mut map = screenshots().lock().unwrap_or_else(|e| e.into_inner());
-    map.remove(id);
     // Also clear last error and pending waiters for this tab
     screenshot_errors()
         .lock()
@@ -161,15 +146,12 @@ pub fn get_last_error(id: &str) -> Option<String> {
     map.get(id).cloned()
 }
 
-/// Hold until a real screenshot is pushed, up to `max_secs` (10 s as you requested).
-/// Returns `Some(png)` if cache was already present or became available during hold,
-/// `None` if still empty after the timeout (caller should return debug logs).
+/// Hold until a real screenshot is pushed, up to `max_secs` (10 s).
+/// Fresh-only: never returns a cached image, always waits for the next
+/// `store_screenshot` push triggered by `request-screenshot:{id}`.
+/// Returns `Some(png)` if a fresh capture arrived, `None` on timeout.
 pub async fn wait_for_screenshot(id: String, max_secs: u64) -> Option<Vec<u8>> {
-    // Fast path: already cached
-    if let Some(png) = get_screenshot(&id) {
-        return Some(png);
-    }
-    // Register a oneshot waiter for this id
+    // Register a oneshot waiter for this id — no cache fast path
     let (tx, rx) = oneshot::channel();
     {
         let mut map = waiters().lock().unwrap_or_else(|e| e.into_inner());
@@ -178,14 +160,8 @@ pub async fn wait_for_screenshot(id: String, max_secs: u64) -> Option<Vec<u8>> {
     // Hold the connection — wakes when `store_screenshot` drains WAITERS[&id]
     match timeout(Duration::from_secs(max_secs), rx).await {
         Ok(Ok(png)) => Some(png),
-        Ok(Err(_)) => {
-            // Sender dropped without sending (e.g., tab closed) — check cache again
-            get_screenshot(&id)
-        }
-        Err(_) => {
-            // Timeout after 10 s — still check cache once more in case of race
-            get_screenshot(&id)
-        }
+        Ok(Err(_)) => None,
+        Err(_) => None,
     }
 }
 

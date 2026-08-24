@@ -114,11 +114,34 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     });
 
     // Receive PTY output from Rust (pty:data:{id} events) and write to terminal
+    // Straightforward: detect clear sequences and wipe xterm scrollback so UI
+    // matches backend OUTPUTS ring (which is auto-cleared in pty.rs append_output).
     let unlistenData: UnlistenFn | null = null;
     listen<string>(`pty:data:${id}`, (event) => {
-      term.write(event.payload);
+      const payload = event.payload;
+      if (
+        payload.includes("\x0c") ||
+        payload.includes("\x1b[2J") ||
+        payload.includes("\x1b[3J") ||
+        payload.includes("\x1bc")
+      ) {
+        try {
+          term.clear();
+        } catch {}
+      }
+      term.write(payload);
     }).then((fn) => {
       unlistenData = fn;
+    }).catch(console.error);
+
+    // Handle explicit clear from backend (POST /clear or clear_terminal invoke)
+    let unlistenClear: UnlistenFn | null = null;
+    listen(`clear-terminal:${id}`, () => {
+      try {
+        term.clear();
+      } catch {}
+    }).then((fn) => {
+      unlistenClear = fn;
     }).catch(console.error);
 
     // Handle PTY exit (shell terminated) — notify App to remove the tab
@@ -159,6 +182,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       dataDisposable.dispose();
       titleDisposable.dispose();
       if (unlistenData) unlistenData();
+      if (unlistenClear) unlistenClear();
       if (unlistenExit) unlistenExit();
       resizeObserver.disconnect();
       term.dispose();

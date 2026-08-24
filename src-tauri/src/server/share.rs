@@ -10,7 +10,9 @@ use axum::{routing::{get, post}, Router};
 use tauri::{AppHandle, Emitter};
 use tower_http::cors::{Any, CorsLayer};
 
-use super::handlers::{get_cwd_scoped, get_output_scoped, get_screenshot_scoped, health_scoped, post_input_scoped, post_resize_scoped};
+use super::handlers::{
+    clear_output_scoped, get_cwd_scoped, get_output_scoped, get_screenshot_scoped, health_scoped, post_input_scoped, post_resize_scoped,
+};
 use super::state::{shares, SharedInfo, SharedServer};
 
 /// Share a tab's PTY on a new random high port. Idempotent — if already shared, returns existing port.
@@ -36,6 +38,7 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
     let url = format!("http://127.0.0.1:{}", port);
 
     // Build a router scoped to this id — no :id param needed, port IS the id
+    // Straightforward: every GET is no-store/fresh, POST /clear wipes logs + screenshot waiters
     let id_clone = id.clone();
     let router = Router::new()
         .route("/health", get({
@@ -58,6 +61,20 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
             let id = id_clone.clone();
             move |b: axum::Json<super::handlers::ResizeReq>| post_resize_scoped(b, id.clone())
         }))
+        .route("/clear", post({
+            let id = id_clone.clone();
+            let app = app.clone();
+            move || {
+                let id2 = id.clone();
+                let app2 = app.clone();
+                async move {
+                    let res = clear_output_scoped(id2.clone()).await;
+                    // Notify frontend to clear xterm viewport + scrollback (straightforward, no stale UI)
+                    let _ = app2.emit(&format!("clear-terminal:{}", id2), ());
+                    res
+                }
+            }
+        }))
         .route("/screenshot", get({
             let id = id_clone.clone();
             let app = app.clone();
@@ -65,7 +82,7 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
                 let id2 = id.clone();
                 let app2 = app.clone();
                 async move {
-                    // On-demand: tell the frontend to capture this tab now
+                    // On-demand fresh capture: tell the frontend to capture this tab now, then hold
                     let _ = app2.emit(&format!("request-screenshot:{}", id2), ());
                     get_screenshot_scoped(q, id2).await
                 }
