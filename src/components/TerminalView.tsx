@@ -99,15 +99,24 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
 
     // Attach the terminal to the DOM and fit to container size
     term.open(wrapperRef.current);
-    const doFit = () => {
-      try {
-        fitAddon.fit();
-      } catch {}
-    };
+    // Instant fit+resize before fonts load — fixes top hidden immediately, then correct after font
+    try {
+      fitAddon.fit();
+      const dims = fitAddon.proposeDimensions();
+      if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows) && dims.cols > 0 && dims.rows > 0) {
+        invoke("resize_session", { id, cols: Math.floor(dims.cols), rows: Math.floor(dims.rows) }).catch(console.error);
+      }
+    } catch {}
     if (document.fonts?.ready) {
-      document.fonts.ready.then(doFit).catch(doFit);
-    } else {
-      doFit();
+      document.fonts.ready.then(() => {
+        try {
+          fitAddon.fit();
+          const dims = fitAddon.proposeDimensions();
+          if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows) && dims.cols > 0 && dims.rows > 0) {
+            invoke("resize_session", { id, cols: Math.floor(dims.cols), rows: Math.floor(dims.rows) }).catch(console.error);
+          }
+        } catch {}
+      }).catch(() => {});
     }
 
     // Forward user keystrokes to the PTY (Rust handles actual shell input)
@@ -133,12 +142,14 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
           term.clear();
         } catch {}
       }
-      term.write(p);
-      try {
-        // Keep viewport pinned to bottom after burst HTTP writes — fixes top hidden after bulk ls
-        // @ts-ignore - scrollToBottom is available with scrollback
-        term.scrollToBottom();
-      } catch {}
+      // Use write callback so scroll happens after InputHandler updates ybase — fixes top hidden on burst
+      // @ts-ignore
+      term.write(p, () => {
+        try {
+          // @ts-ignore
+          term.scrollToBottom();
+        } catch {}
+      });
     }).then((fn) => {
       unlistenData = fn;
     }).catch(console.error);

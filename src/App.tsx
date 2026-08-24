@@ -211,7 +211,7 @@ export const App: React.FC = () => {
     let rows = 24;
     try {
       const charW = Math.max(1, config.fontSize * 0.6);
-      const charH = Math.max(1, config.fontSize * 1.2 + 4);
+      const charH = Math.max(1, config.fontSize * 1.0);
       cols = Math.max(20, Math.floor(window.innerWidth / charW));
       rows = Math.max(10, Math.floor((window.innerHeight - 38) / charH));
     } catch {}
