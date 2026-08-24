@@ -47,7 +47,7 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
         }))
         .route("/output", get({
             let id = id_clone.clone();
-            move |q: axum::extract::Query<super::handlers::OutputQuery>| get_output_scoped(q, id.clone())
+            move || get_output_scoped(id.clone())
         }))
         .route("/input", post({
             let id = id_clone.clone();

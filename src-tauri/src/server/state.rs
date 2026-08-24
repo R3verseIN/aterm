@@ -89,13 +89,6 @@ pub fn store_screenshot(id: &str, png_b64: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Retrieve a PNG screenshot — deprecated fresh-only mode returns None always
-/// to avoid stale serving. Kept for 503 debug logging compatibility.
-#[allow(dead_code)]
-pub fn get_screenshot(_id: &str) -> Option<Vec<u8>> {
-    None
-}
-
 /// Remove a tab's pending screenshot waiters/errors (on clear/unshare/close).
 /// No persistent image cache to clear — just waiters and error logs.
 pub fn remove_screenshot(id: &str) {

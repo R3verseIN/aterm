@@ -1,8 +1,8 @@
 //! handlers.rs — Per-tab scoped HTTP handlers (port is the id).
 //!
-//! Straightforward no-cache design: every GET is fresh, never serves stale.
-//! - `GET /output` reads OUTPUTS ring live, includes generation so clients detect clears.
-//! - `GET /screenshot` always waits for fresh html2canvas push, no cache fast-path.
+//! Simple no-cache design: every GET is fresh, dump-all `GET /output` returns whole ring.
+//! - `GET /output` dumps 512KB ring (no cursor, `since` ignored).
+//! - `GET /screenshot` always waits for fresh html2canvas push, no cache.
 //! - All GET responses send `no-store` headers.
 
 use axum::{
@@ -24,23 +24,12 @@ fn no_store_headers() -> [(header::HeaderName, &'static str); 3] {
     ]
 }
 
-/// Query for `GET /output?since=0&limit=32768` polling.
-/// `since` is byte offset into the 512KB `OUTPUTS` ring, `next_offset` is next cursor.
-#[derive(Deserialize)]
-pub struct OutputQuery {
-    pub since: Option<usize>,
-    pub limit: Option<usize>,
-}
-
-/// Typed response for `GET /output?since=0&limit=…` — used by `get_output_scoped`.
+/// Typed response for `GET /output` — simple dump-all (no cursor).
 #[derive(Serialize)]
 struct OutputResp {
     data: String,
-    next_offset: usize,
     total: usize,
-    truncated: bool,
     id: String,
-    generation: u64,
 }
 
 #[derive(Deserialize)]
@@ -66,23 +55,13 @@ pub async fn health_scoped(id: String) -> impl IntoResponse {
     (StatusCode::OK, no_store_headers(), Json(body)).into_response()
 }
 
-/// GET /output?since=0&limit=32768 — live poll for this tab's PTY output.
-/// Lossy UTF-8 string, next_offset to use for next poll. Includes generation
-/// so clients can detect a clear (generation bumped, total reset to 0).
-pub async fn get_output_scoped(Query(q): Query<OutputQuery>, id: String) -> impl IntoResponse {
-    let since = q.since.unwrap_or(0);
-    let limit = q.limit.unwrap_or(32 * 1024).min(256 * 1024);
-    match pty::get_output_since(&id, since, limit) {
-        Ok((bytes, next, total, generation)) => {
+/// GET /output — simple dump-all for the tab's PTY output.
+/// Returns the whole 512KB ring (no cursor).
+pub async fn get_output_scoped(id: String) -> impl IntoResponse {
+    match pty::get_output(&id) {
+        Ok((bytes, total)) => {
             let data = String::from_utf8_lossy(&bytes).to_string();
-            let body = OutputResp {
-                data,
-                next_offset: next,
-                total,
-                truncated: next < total,
-                id,
-                generation,
-            };
+            let body = OutputResp { data, total, id };
             (StatusCode::OK, no_store_headers(), Json(body)).into_response()
         }
         Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))).into_response(),
@@ -105,12 +84,12 @@ pub async fn post_resize_scoped(Json(req): Json<ResizeReq>, id: String) -> impl 
     }
 }
 
-/// POST /clear — clear terminal output history for this tab. Straightforward: drain OUTPUTS ring,
-/// bump generation, invalidate screenshot waiters. No stale logs after this.
+/// POST /clear — clear terminal output history for this tab. Simple: drain OUTPUTS ring
+/// and invalidate screenshot waiters. No stale logs after this.
 pub async fn clear_output_scoped(id: String) -> impl IntoResponse {
     match pty::clear_output(&id) {
         Ok(_) => {
-            let body = serde_json::json!({"ok": true, "id": id, "cleared": true, "generation": pty::get_generation(&id)});
+            let body = serde_json::json!({"ok": true, "id": id, "cleared": true});
             (StatusCode::OK, no_store_headers(), Json(body)).into_response()
         }
         Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))).into_response(),

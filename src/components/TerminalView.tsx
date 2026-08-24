@@ -114,22 +114,17 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     });
 
     // Receive PTY output from Rust (pty:data:{id} events) and write to terminal
-    // Straightforward: detect clear sequences and wipe xterm scrollback so UI
-    // matches backend OUTPUTS ring (which is auto-cleared in pty.rs append_output).
+    // Sync with HTTP dump-all: narrow clear detection (2J/3J/0x0c/ESCc) matches
+    // pty.rs contains_clear_sequence — wipe xterm scrollback so both are same.
     let unlistenData: UnlistenFn | null = null;
     listen<string>(`pty:data:${id}`, (event) => {
-      const payload = event.payload;
-      if (
-        payload.includes("\x0c") ||
-        payload.includes("\x1b[2J") ||
-        payload.includes("\x1b[3J") ||
-        payload.includes("\x1bc")
-      ) {
+      const p = event.payload;
+      if (p.includes("\x0c") || p.includes("\x1b[2J") || p.includes("\x1b[3J") || p.includes("\x1bc")) {
         try {
           term.clear();
         } catch {}
       }
-      term.write(payload);
+      term.write(p);
     }).then((fn) => {
       unlistenData = fn;
     }).catch(console.error);
