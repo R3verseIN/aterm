@@ -300,9 +300,8 @@ button, input, select, .no-drag,
   display: flex !important;
   flex-direction: column !important;
   width: 100% !important;
-  /* no fixed height — flex fills parent; min-height:0 allows shrinking */
   min-height: 0 !important;
-  height: auto !important;
+  height: 0 !important;
   /* Theme switches fade instead of flashing */
   transition: background-color 200ms var(--ease-out) !important;
 }

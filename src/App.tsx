@@ -497,7 +497,7 @@ export const App: React.FC = () => {
   const currentThemeColors = themes[config.theme] || themes["aterm-dark"];
 
   return (
-    <div className="relative flex flex-col h-screen w-screen bg-[#141416] text-zinc-100 font-sans overflow-hidden">
+    <div className="relative flex flex-col h-full w-full bg-[#141416] text-zinc-100 font-sans overflow-hidden">
       {/* Frameless resize affordance — 8 edge/corner handles (fixed, 6 px) that call
           Tauri's native `startResizeDragging` so `decorations:false` + Wayland still
           has a grab area. See WindowResizeHandles.tsx for direction/cursor docs. */}
