@@ -65,12 +65,21 @@ pub fn get_share(id: &str) -> Option<SharedInfo> {
 // via oneshot waiters. Straightforward, no instant stale path.
 // ---------------------------------------------------------------------------
 
+static SCREENSHOTS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+
+fn screenshots() -> &'static Mutex<HashMap<String, Vec<u8>>> {
+    SCREENSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Store a PNG screenshot for a tab (called from Tauri command `store_screenshot`).
-/// Decodes base64 and wakes any `GET /screenshot` waiters holding the connection.
-/// No persistent cache — purely a rendezvous to keep logic fresh-only.
+/// Decodes base64, caches for current endpoint, and wakes any `GET /screenshot` waiters.
 pub fn store_screenshot(id: &str, png_b64: &str) -> Result<(), String> {
     let bytes = base64_decode(png_b64)?;
     println!("[screenshot] store for {}: {} bytes b64 -> {} bytes png", id, png_b64.len(), bytes.len());
+    {
+        let mut map = screenshots().lock().unwrap_or_else(|e| e.into_inner());
+        map.insert(id.to_string(), bytes.clone());
+    }
     // Wake any `GET /screenshot` handlers holding a wait for this id (10 s hold)
     if let Some(waiters_vec) = waiters()
         .lock()
@@ -89,9 +98,17 @@ pub fn store_screenshot(id: &str, png_b64: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Remove a tab's pending screenshot waiters/errors (on clear/unshare/close).
-/// No persistent image cache to clear — just waiters and error logs.
+pub fn get_screenshot(id: &str) -> Option<Vec<u8>> {
+    let map = screenshots().lock().unwrap_or_else(|e| e.into_inner());
+    map.get(id).cloned()
+}
+
+/// Remove a tab's pending screenshot waiters/errors and cached image (on clear/unshare/close).
 pub fn remove_screenshot(id: &str) {
+    {
+        let mut map = screenshots().lock().unwrap_or_else(|e| e.into_inner());
+        map.remove(id);
+    }
     // Also clear last error and pending waiters for this tab
     screenshot_errors()
         .lock()
@@ -153,6 +170,67 @@ pub async fn wait_for_screenshot(id: String, max_secs: u64) -> Option<Vec<u8>> {
     // Hold the connection — wakes when `store_screenshot` drains WAITERS[&id]
     match timeout(Duration::from_secs(max_secs), rx).await {
         Ok(Ok(png)) => Some(png),
+        Ok(Err(_)) => None,
+        Err(_) => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Output waiters for hold-till-output (dump-all with ?wait)
+// ---------------------------------------------------------------------------
+
+static OUTPUT_WAITERS: OnceLock<Mutex<HashMap<String, Vec<oneshot::Sender<(Vec<u8>, usize, u64)>>>>> =
+    OnceLock::new();
+
+fn output_waiters(
+) -> &'static Mutex<HashMap<String, Vec<oneshot::Sender<(Vec<u8>, usize, u64)>>>> {
+    OUTPUT_WAITERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Notify all waiters for an output id that new data is available.
+/// Called from pty::append_output / clear_output after bumping version.
+pub fn notify_output_waiters(id: &str, _version: u64) {
+    if let Some(waiters_vec) = output_waiters()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(id)
+    {
+        // Fetch current output once and clone for each waiter
+        if let Ok((bytes, total, ver)) = crate::pty::get_output(id) {
+            for tx in waiters_vec {
+                let _ = tx.send((bytes.clone(), total, ver));
+            }
+        }
+    }
+}
+
+/// Remove all pending output waiters for a session (on close/clear).
+pub fn remove_output_waiters(id: &str) {
+    output_waiters()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(id);
+}
+
+/// Hold until output version changes, up to `max_secs`.
+/// `since` is the last version the client saw (from previous GET /output's `version`).
+/// Returns Some((bytes,total,version)) if new output arrived, None on timeout.
+pub async fn wait_for_output(id: String, since: u64, max_secs: u64) -> Option<(Vec<u8>, usize, u64)> {
+    // Fast path: already newer than since
+    if let Ok((bytes, total, ver)) = crate::pty::get_output(&id) {
+        if ver != since {
+            return Some((bytes, total, ver));
+        }
+    } else {
+        return None;
+    }
+    let (tx, rx) = oneshot::channel();
+    {
+        let mut map = output_waiters().lock().unwrap_or_else(|e| e.into_inner());
+        map.entry(id.clone()).or_default().push(tx);
+    }
+    match timeout(Duration::from_secs(max_secs), rx).await {
+        Ok(Ok(v)) => Some(v),
         Ok(Err(_)) => None,
         Err(_) => None,
     }

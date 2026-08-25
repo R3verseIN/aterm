@@ -11,7 +11,8 @@ use tauri::{AppHandle, Emitter};
 use tower_http::cors::{Any, CorsLayer};
 
 use super::handlers::{
-    clear_output_scoped, get_cwd_scoped, get_output_scoped, get_screenshot_scoped, health_scoped, post_input_scoped, post_resize_scoped,
+    clear_output_scoped, get_cwd_scoped, get_history_scoped, get_output_scoped, get_screenshot_current_scoped,
+    get_screenshot_scoped, health_scoped, post_input_scoped, post_resize_scoped,
 };
 use super::state::{shares, SharedInfo, SharedServer};
 
@@ -47,7 +48,11 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
         }))
         .route("/output", get({
             let id = id_clone.clone();
-            move || get_output_scoped(id.clone())
+            move |q: axum::extract::Query<super::handlers::OutputQuery>| get_output_scoped(q, id.clone())
+        }))
+        .route("/history", get({
+            let id = id_clone.clone();
+            move || get_history_scoped(id.clone())
         }))
         .route("/input", post({
             let id = id_clone.clone();
@@ -74,6 +79,10 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
                     res
                 }
             }
+        }))
+        .route("/screenshot/current", get({
+            let id = id_clone.clone();
+            move |q: axum::extract::Query<super::handlers::ScreenshotQuery>| get_screenshot_current_scoped(q, id.clone())
         }))
         .route("/screenshot", get({
             let id = id_clone.clone();
@@ -164,8 +173,9 @@ pub fn unshare_tab(id: &str) -> Result<(), String> {
         let _ = std::fs::remove_file(format!("/tmp/aterm-{}.url", short));
         println!("[aterm share] tab {} unshared (port {})", id, entry.port);
     }
-    // Evict screenshot cache (per-tab PNG) — keeps memory bounded
+    // Evict screenshot and output waiters — keeps memory bounded
     super::state::remove_screenshot(id);
+    super::state::remove_output_waiters(id);
     Ok(())
 }
 

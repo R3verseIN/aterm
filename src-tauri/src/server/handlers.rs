@@ -24,17 +24,28 @@ fn no_store_headers() -> [(header::HeaderName, &'static str); 3] {
     ]
 }
 
-/// Typed response for `GET /output` — simple dump-all (no cursor).
+/// Query for `GET /output?wait=ms&since=version` — hold-till-output.
+/// `since` is the last version the client saw (from previous `version` field).
+/// `wait` is hold time in seconds (0 = immediate dump, max 30). Holds until version changes.
+#[derive(Deserialize)]
+pub struct OutputQuery {
+    pub since: Option<u64>,
+    pub wait: Option<u64>,
+}
+
+/// Typed response for `GET /output` — simple dump-all with version for hold.
 #[derive(Serialize)]
 struct OutputResp {
     data: String,
     total: usize,
+    version: u64,
     id: String,
 }
 
 #[derive(Deserialize)]
 pub struct WriteReq {
     pub data: String,
+    pub wait: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -56,36 +67,88 @@ pub async fn health_scoped(id: String) -> impl IntoResponse {
 }
 
 /// GET /output — simple dump-all for the tab's PTY output.
-/// Returns the whole 512KB ring (no cursor).
-pub async fn get_output_scoped(id: String) -> impl IntoResponse {
+/// Returns the whole 512KB ring (no cursor). `?wait=seconds&since=version` holds until new output.
+/// Holds via oneshot waiters (like screenshot) — no polling needed for agents.
+pub async fn get_output_scoped(Query(q): Query<OutputQuery>, id: String) -> impl IntoResponse {
+    let wait_secs = q.wait.unwrap_or(0).min(30);
+    if let Some(since) = q.since {
+        if wait_secs > 0 {
+            // Hold-till-output: wait until version > since
+            if let Some((bytes, total, ver)) =
+                crate::server::state::wait_for_output(id.clone(), since, wait_secs).await
+            {
+                let data = String::from_utf8_lossy(&bytes).to_string();
+                let body = OutputResp { data, total, version: ver, id };
+                return (StatusCode::OK, no_store_headers(), Json(body)).into_response();
+            } else {
+                // Timeout: return current with timedOut flag so agent can retry without error log spam
+                if let Ok((bytes, total, ver)) = pty::get_output(&id) {
+                    let data = String::from_utf8_lossy(&bytes).to_string();
+                    return (
+                        StatusCode::OK,
+                        no_store_headers(),
+                        Json(serde_json::json!({"data": data, "total": total, "version": ver, "id": id, "timedOut": true})),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    }
     match pty::get_output(&id) {
-        Ok((bytes, total)) => {
+        Ok((bytes, total, version)) => {
             let data = String::from_utf8_lossy(&bytes).to_string();
-            let body = OutputResp { data, total, id };
+            let body = OutputResp { data, total, version, id };
             (StatusCode::OK, no_store_headers(), Json(body)).into_response()
         }
         Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))).into_response(),
     }
 }
 
-/// POST /input {"data":"ls\n"} — write into the PTY master (same as xterm onData).
-/// Stable: auto-normalizes trailing newline for agent stability. xterm onData sends \r for Enter,
-/// but JSON docs use \n. Handles both, and auto-appends \r if missing to avoid ghost blue cursor hang.
+/// POST /input {"data":"ls\n","wait":2} — one-way exec: write + hold till output, simple.
+/// Auto-normalizes \n→\r and auto-appends \r if missing (ghost fix). Holds till version changes.
 pub async fn post_input_scoped(Json(req): Json<WriteReq>, id: String) -> impl IntoResponse {
+    if !crate::pty::session_exists(&id) {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": format!("session not found: {}", id)}))).into_response();
+    }
+    let wait_secs = req.wait.unwrap_or(2).min(10);
+    let before = crate::pty::get_version(&id);
     let mut data = req.data.clone();
-    // Normalize line endings to \r (canonical Enter) and auto-append if missing
     if data.ends_with("\r\n") {
-        data.pop(); // strip \n, keep \r
+        data.pop();
     } else if data.ends_with('\n') {
         data.pop();
         data.push('\r');
     } else if !data.ends_with('\r') && !data.ends_with('\x03') && !data.ends_with('\x04') && !data.ends_with('\x1a') && !data.is_empty() {
-        // No terminator — auto-append \r to prevent ghost "pwd; ls" line-buffer hang
-        // Only for data that looks like a command (avoid appending to raw escape sequences)
         data.push('\r');
     }
-    match pty::write_to_session(&id, &data) {
-        Ok(_) => Json(serde_json::json!({"ok": true})).into_response(),
+    if let Err(e) = crate::pty::write_to_session(&id, &data) {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))).into_response();
+    }
+    if wait_secs > 0 {
+        if let Some((bytes, total, ver)) = crate::server::state::wait_for_output(id.clone(), before, wait_secs).await {
+            let data_str = String::from_utf8_lossy(&bytes).to_string();
+            return (StatusCode::OK, no_store_headers(), Json(serde_json::json!({"data": data_str, "total": total, "version": ver, "id": id}))).into_response();
+        } else if let Ok((bytes, total, ver)) = pty::get_output(&id) {
+            let data_str = String::from_utf8_lossy(&bytes).to_string();
+            return (StatusCode::OK, no_store_headers(), Json(serde_json::json!({"data": data_str, "total": total, "version": ver, "id": id, "timedOut": true}))).into_response();
+        }
+    }
+    match pty::get_output(&id) {
+        Ok((bytes, total, version)) => {
+            let data_str = String::from_utf8_lossy(&bytes).to_string();
+            (StatusCode::OK, no_store_headers(), Json(serde_json::json!({"data": data_str, "total": total, "version": version, "id": id}))).into_response()
+        }
+        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))).into_response(),
+    }
+}
+
+/// GET /history — simple dump-all current history (no hold), alias for GET /output without wait.
+pub async fn get_history_scoped(id: String) -> impl IntoResponse {
+    match pty::get_output(&id) {
+        Ok((bytes, total, version)) => {
+            let data = String::from_utf8_lossy(&bytes).to_string();
+            (StatusCode::OK, no_store_headers(), Json(serde_json::json!({"data": data, "total": total, "version": version, "id": id}))).into_response()
+        }
         Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))).into_response(),
     }
 }
@@ -129,9 +192,52 @@ pub struct ScreenshotQuery {
     pub format: Option<String>,
 }
 
+/// GET /screenshot/current — immediate cached screenshot (no hold), for history view.
+pub async fn get_screenshot_current_scoped(Query(q): Query<ScreenshotQuery>, id: String) -> impl IntoResponse {
+    if !crate::pty::session_exists(&id) {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "session not found"}))).into_response();
+    }
+    if let Some(png) = crate::server::state::get_screenshot(&id) {
+        let fmt = q.format.as_deref().unwrap_or("png");
+        if fmt == "base64" {
+            const ALPH: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            let mut out = String::with_capacity(png.len() * 4 / 3 + 4);
+            let mut i = 0;
+            while i < png.len() {
+                let b0 = png[i] as u32;
+                let b1 = if i + 1 < png.len() { png[i + 1] as u32 } else { 0 };
+                let b2 = if i + 2 < png.len() { png[i + 2] as u32 } else { 0 };
+                let n = (b0 << 16) | (b1 << 8) | b2;
+                out.push(ALPH[((n >> 18) & 63) as usize] as char);
+                out.push(ALPH[((n >> 12) & 63) as usize] as char);
+                out.push(if i + 1 < png.len() { ALPH[((n >> 6) & 63) as usize] as char } else { '=' });
+                out.push(if i + 2 < png.len() { ALPH[(n & 63) as usize] as char } else { '=' });
+                i += 3;
+            }
+            return (StatusCode::OK, no_store_headers(), Json(serde_json::json!({"image": format!("data:image/png;base64,{}", out), "id": id}))).into_response();
+        }
+        return (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "no-store, no-cache, must-revalidate, proxy-revalidate"),
+                (header::PRAGMA, "no-cache"),
+                (header::EXPIRES, "0"),
+            ],
+            png,
+        )
+            .into_response();
+    }
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({"error": "no cached screenshot yet — run GET /screenshot first to trigger capture", "id": id})),
+    )
+        .into_response()
+}
+
 /// GET /screenshot — per-tab PNG of that tab's terminal, even when not focused.
 ///
-/// Fresh-only, no cache: every request triggers `request-screenshot:{id}` in
+/// Fresh-only, holds till capture: every request triggers `request-screenshot:{id}` in
 /// `share.rs` then holds up to 10s for the frontend's `html2canvas` push.
 /// No stale fast-path — if the frontend doesn't push in time, returns 503.
 pub async fn get_screenshot_scoped(Query(q): Query<ScreenshotQuery>, id: String) -> impl IntoResponse {

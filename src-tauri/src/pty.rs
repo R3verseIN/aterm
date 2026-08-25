@@ -33,6 +33,9 @@ static SESSIONS: OnceLock<Mutex<HashMap<String, Session>>> = OnceLock::new();
 /// Simple dump-all: `GET /output` returns the whole buffer (no cursor).
 static OUTPUTS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
 
+/// Monotonic version per session — bumped on every append/clear so hold-till-output can detect change even when total stays capped at 512KB.
+static OUTPUT_VERSIONS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+
 /// Accessor for the global SESSIONS map, initializing it on first call.
 fn sessions() -> &'static Mutex<HashMap<String, Session>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -40,6 +43,21 @@ fn sessions() -> &'static Mutex<HashMap<String, Session>> {
 
 fn outputs() -> &'static Mutex<HashMap<String, Vec<u8>>> {
     OUTPUTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn output_versions() -> &'static Mutex<HashMap<String, u64>> {
+    OUTPUT_VERSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn bump_version(id: &str) -> u64 {
+    let mut map = output_versions().lock().unwrap_or_else(|e| e.into_inner());
+    let e = map.entry(id.to_string()).or_insert(0);
+    *e = e.wrapping_add(1);
+    *e
+}
+
+pub fn get_version(id: &str) -> u64 {
+    output_versions().lock().unwrap_or_else(|e| e.into_inner()).get(id).copied().unwrap_or(0)
 }
 
 /// Narrow auto-clear: only real clear sequences (`clear`/`reset`/`Ctrl-L`).
@@ -80,10 +98,12 @@ fn append_output(id: &str, data: &[u8]) {
         let drain = buf.len() - MAX;
         buf.drain(0..drain);
     }
+    let ver = bump_version(id);
+    crate::server::state::notify_output_waiters(id, ver);
 }
 
 /// Explicit clear of a session's output history (called via POST /clear or Tauri clear_terminal).
-/// Simple: drain the ring and invalidate screenshot. No generation tracking.
+/// Simple: drain the ring and invalidate screenshot. Bumps version so hold-till-output waiters wake.
 pub fn clear_output(id: &str) -> Result<(), String> {
     if !session_exists(id) {
         return Err(format!("session not found: {}", id));
@@ -95,6 +115,8 @@ pub fn clear_output(id: &str) -> Result<(), String> {
             map.insert(id.to_string(), Vec::new());
         }
     }
+    let ver = bump_version(id);
+    crate::server::state::notify_output_waiters(id, ver);
     crate::server::state::remove_screenshot(id);
     Ok(())
 }
@@ -109,7 +131,12 @@ pub fn cleanup_state(id: &str) {
         let mut out = outputs().lock().unwrap_or_else(|e| e.into_inner());
         out.remove(id);
     }
+    {
+        let mut ver = output_versions().lock().unwrap_or_else(|e| e.into_inner());
+        ver.remove(id);
+    }
     crate::server::state::remove_screenshot(id);
+    crate::server::state::remove_output_waiters(id);
 }
 
 /// Returns the current working directory of the given session's shell process.
@@ -223,6 +250,7 @@ pub fn create_session(app: AppHandle, cols: u16, rows: u16, cwd: Option<String>)
 
     // Init empty history for this session
     outputs().lock().unwrap().insert(id.clone(), Vec::new());
+    output_versions().lock().unwrap().insert(id.clone(), 0);
 
     std::thread::spawn(move || {
         let mut buf = vec![0u8; 32 * 1024];
@@ -373,10 +401,12 @@ pub fn session_exists(id: &str) -> bool {
         .contains_key(id)
 }
 
-/// Get output snapshot for HTTP: returns (data_bytes, total_len).
-/// Simple dump-all: returns the whole 512KB ring (no cursor). Poison recovery.
-pub fn get_output(id: &str) -> Result<(Vec<u8>, usize), String> {
+/// Get output snapshot for HTTP: returns (data_bytes, total_len, version).
+/// Simple dump-all: returns the whole 512KB ring (no cursor). Version is monotonic per append/clear.
+/// Poison recovery.
+pub fn get_output(id: &str) -> Result<(Vec<u8>, usize, u64), String> {
     let map = outputs().lock().unwrap_or_else(|e| e.into_inner());
     let buf = map.get(id).ok_or_else(|| format!("session not found: {}", id))?;
-    Ok((buf.clone(), buf.len()))
+    let ver = get_version(id);
+    Ok((buf.clone(), buf.len(), ver))
 }
