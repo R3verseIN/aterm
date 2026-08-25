@@ -15,7 +15,22 @@
  * The enum is validated on the frontend via Zod (ConfigSchema) and
  * serialized as a string to the Rust backend (Config.theme).
  */
-export type ThemeName = "aterm-dark" | "aterm-light" | "nord";
+export type ThemeName =
+  | "aterm-dark"
+  | "aterm-light"
+  | "nord"
+  | "pitchblack"
+  | "transparent"
+  | "dracula"
+  | "gruvbox-dark"
+  | "gruvbox-light"
+  | "tokyo-night"
+  | "catppuccin-mocha"
+  | "catppuccin-latte"
+  | "solarized-dark"
+  | "solarized-light"
+  | "monokai"
+  | "one-dark";
 
 /**
  * Tab — minimal metadata for a single terminal session / tab.

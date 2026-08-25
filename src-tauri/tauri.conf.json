@@ -18,6 +18,7 @@
         "width": 1024,
         "height": 768,
         "decorations": false,
+        "transparent": true,
         "resizable": true,
         "minWidth": 600,
         "minHeight": 400

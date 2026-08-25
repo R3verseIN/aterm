@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ChevronDown, Settings, X } from "lucide-react";
 import { ConfigSchema, ConfigType } from "../schemas/configSchema";
+import { ThemeColors } from "../types/terminal";
 
 /**
  * Props for the settings drawer.
@@ -15,6 +16,7 @@ import { ConfigSchema, ConfigType } from "../schemas/configSchema";
 interface SettingsDrawerProps {
   isOpen: boolean;
   config: ConfigType;
+  themeColors?: ThemeColors;
   onSave: (newConfig: ConfigType) => void;
   onClose: () => void;
 }
@@ -40,9 +42,21 @@ interface SettingsDrawerProps {
 export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
   isOpen,
   config,
+  themeColors,
   onSave,
   onClose,
 }) => {
+  // For transparent theme keep drawer opaque for readability (not glass)
+  const rawPanelBg = themeColors?.background ?? "#18191c";
+  const panelBg = config.theme === "transparent" ? "#18181b" : rawPanelBg;
+  const panelBorder = themeColors?.brightBlack ?? "#27272a";
+  const panelFg = themeColors?.foreground ?? "#e4e4e7";
+  const isLight = ["aterm-light", "gruvbox-light", "catppuccin-latte", "solarized-light"].includes(config.theme);
+  const inputBg = isLight ? "#ffffff" : "#18181b";
+  const inputBorder = isLight ? "#d4d4d8" : "#3f3f46";
+  const inputText = isLight ? "#18181b" : "#e4e4e7";
+  const labelColor = isLight ? "#52525b" : "#a1a1aa";
+  const headerBorder = isLight ? "#e4e4e7" : panelBorder;
   const {
     register,
     handleSubmit,
@@ -76,22 +90,28 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
           scroll; click-through is prevented by z-index ordering (scrim z-40,
           drawer z-50). Fades via opacity for smooth open/close. */}
       <div
-        className={`fixed inset-0 top-[38px] bg-black/30 z-40 transition-opacity duration-200 ease-out drawer-scrim ${scrimClass}`}
+        className={`fixed inset-0 top-9.5 bg-black/30 z-40 transition-opacity duration-200 ease-out drawer-scrim ${scrimClass}`}
         onClick={onClose}
         aria-hidden="true"
       />
       <aside
-        className={`fixed top-[38px] right-0 w-80 max-w-[90vw] h-[calc(100dvh-38px)] bg-[#18191c] border-l border-zinc-800 p-5 flex flex-col gap-4 z-50 shadow-2xl transition-transform duration-240 ease-out drawer-panel will-change-transform ${panelClass}`}
-        style={{ transitionTimingFunction: "var(--ease-spring, cubic-bezier(0.32,0.72,0,1))" }}
+        className={`fixed top-9.5 right-0 w-80 max-w-[90vw] h-[calc(100dvh-38px)] border-l p-5 flex flex-col gap-4 z-50 shadow-2xl transition-transform duration-240 ease-out drawer-panel will-change-transform ${panelClass}`}
+        style={{
+          backgroundColor: panelBg,
+          borderColor: panelBorder,
+          color: panelFg,
+          transitionTimingFunction: "var(--ease-spring, cubic-bezier(0.32,0.72,0,1))",
+        }}
         aria-hidden={!isOpen}
       >
       {/* Header with title and close button */}
-      <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-        <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-          <Settings className="w-4 h-4 text-blue-400" /> Settings
+      <div className="flex items-center justify-between pb-3 border-b" style={{ borderColor: headerBorder }}>
+        <h3 className="text-sm font-semibold flex items-center gap-2" style={{ color: panelFg }}>
+          <Settings className="w-4 h-4" style={{ color: themeColors?.blue ?? "#60a5fa" }} /> Settings
         </h3>
         <button
-          className="text-zinc-400 hover:text-zinc-100 p-1 rounded hover:bg-zinc-800"
+          className="p-1 rounded hover:bg-zinc-800"
+          style={{ color: labelColor }}
           onClick={onClose}
           type="button"
         >
@@ -106,19 +126,32 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
               ChevronDown so the dark theme dropdown has a visible, consistent chevron
               (native WebKit arrow is near-invisible on zinc-900). pr-8 + truncate
               prevents "Aterm Dark (Tabby Style)" from clipping at w-80. */}
-          <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium">
+          <label className="flex flex-col gap-1.5 text-xs font-medium" style={{ color: labelColor }}>
             Color Theme
             <div className="relative">
               <select
                 id="settings-theme"
                 {...register("theme")}
-                className="w-full appearance-none bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 pr-8 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 truncate"
+                className="w-full appearance-none border text-xs rounded-md p-2 pr-8 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 truncate"
+                style={{ backgroundColor: inputBg, borderColor: inputBorder, color: inputText }}
               >
                 <option value="aterm-dark">Aterm Dark (Tabby Style)</option>
                 <option value="aterm-light">Aterm Light</option>
                 <option value="nord">Nord Theme</option>
+                <option value="pitchblack">Pitch Black (#000000)</option>
+                <option value="transparent">Transparent (Glass)</option>
+                <option value="dracula">Dracula</option>
+                <option value="gruvbox-dark">Gruvbox Dark</option>
+                <option value="gruvbox-light">Gruvbox Light</option>
+                <option value="tokyo-night">Tokyo Night</option>
+                <option value="catppuccin-mocha">Catppuccin Mocha</option>
+                <option value="catppuccin-latte">Catppuccin Latte</option>
+                <option value="solarized-dark">Solarized Dark</option>
+                <option value="solarized-light">Solarized Light</option>
+                <option value="monokai">Monokai</option>
+                <option value="one-dark">One Dark</option>
               </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: labelColor }} />
             </div>
           </label>
 
@@ -127,7 +160,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
               min/max/step/inputMode clamp the native spinner and mobile keyboard;
               [appearance:textfield] hides the unstyled WebKit inner-spin-button that
               otherwise overlaps the input as a tiny "icon" on the right (seen in screenshot). */}
-          <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium" htmlFor="settings-fontSize">
+          <label className="flex flex-col gap-1.5 text-xs font-medium" style={{ color: labelColor }} htmlFor="settings-fontSize">
             Font Size (px)
             <input
               id="settings-fontSize"
@@ -139,7 +172,8 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
               aria-invalid={!!errors.fontSize}
               aria-describedby={errors.fontSize ? "settings-fontSize-error" : undefined}
               {...register("fontSize", { valueAsNumber: true })}
-              className="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none placeholder:text-zinc-500 aria-[invalid=true]:border-red-500"
+              className="border text-xs rounded-md p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none placeholder:text-zinc-500 aria-invalid:border-red-500"
+              style={{ backgroundColor: inputBg, borderColor: inputBorder, color: inputText }}
             />
             {errors.fontSize && (
               <span id="settings-fontSize-error" className="text-red-400 text-[11px]">{errors.fontSize.message}</span>
@@ -148,7 +182,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
 
           {/* Shell path — empty means use $SHELL fallback chain on the backend
               (pty::create_session checks $SHELL → /bin/bash → /bin/sh). */}
-          <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium" htmlFor="settings-shell">
+          <label className="flex flex-col gap-1.5 text-xs font-medium" style={{ color: labelColor }} htmlFor="settings-shell">
             Shell Command Path
             <input
               id="settings-shell"
@@ -159,9 +193,10 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
               autoCorrect="off"
               title="Empty uses $SHELL → /bin/bash → /bin/sh fallback on the backend"
               {...register("shell")}
-              className="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono placeholder:text-zinc-500 truncate"
+              className="border text-xs rounded-md p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono placeholder:text-zinc-500 truncate"
+              style={{ backgroundColor: inputBg, borderColor: inputBorder, color: inputText }}
             />
-            <span className="text-[11px] text-zinc-500">Empty uses $SHELL fallback</span>
+            <span className="text-[11px]" style={{ color: labelColor }}>Empty uses $SHELL fallback</span>
           </label>
 
           {/* Font family — freeform CSS font-family string, live-applied via
@@ -169,7 +204,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
               long ('JetBrains Mono','Fira Code','Cascadia Code', monospace) so we
               use font-mono + truncate + title for hover, and allow horizontal scroll
               without wrapping. Previously the input clipped without ellipsis. */}
-          <label className="flex flex-col gap-1.5 text-xs text-zinc-400 font-medium" htmlFor="settings-fontFamily">
+          <label className="flex flex-col gap-1.5 text-xs font-medium" style={{ color: labelColor }} htmlFor="settings-fontFamily">
             Font Family
             <input
               id="settings-fontFamily"
@@ -179,7 +214,8 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
               autoCorrect="off"
               placeholder="JetBrains Mono, monospace"
               {...register("fontFamily")}
-              className="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-md p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono placeholder:text-zinc-500 truncate"
+              className="border text-xs rounded-md p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono placeholder:text-zinc-500 truncate"
+              style={{ backgroundColor: inputBg, borderColor: inputBorder, color: inputText }}
               title={config.fontFamily}
             />
           </label>
@@ -189,7 +225,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
             scrolls. Previously flex-1 + border-t scrolled away; now sticky with
             mt-auto + bg matching the drawer prevents overlap. Includes Cancel
             (ghost) + Save (primary) for explicit discard vs commit. */}
-        <div className="sticky bottom-0 mt-auto pt-3 border-t border-zinc-800 flex gap-2 bg-[#18191c]">
+        <div className="sticky bottom-0 mt-auto pt-3 border-t flex gap-2" style={{ backgroundColor: panelBg, borderColor: panelBorder }}>
           <button
             type="button"
             onClick={onClose}

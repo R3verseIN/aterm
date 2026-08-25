@@ -37,8 +37,8 @@
     height: 100%;
     width: 100%;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    background-color: #141416 !important;
-    color: #e4e4e7;
+    background-color: var(--theme-bg, #141416) !important;
+    color: var(--theme-fg, #e4e4e7);
     overflow: hidden;
     user-select: none;
     /* Theme switches (aterm-dark↔nord) fade the canvas background instead of flashing */
@@ -62,13 +62,13 @@
   background: #3f3f46;
 }
 
-/* Header & Tabbar */
+/* Header & Tabbar — themed via --theme-bg / --theme-border from App.tsx themeVars */
 #tabbar, .tabbar-container {
   height: 38px !important;
   min-height: 38px !important;
   max-height: 38px !important;
-  background-color: #16171a !important;
-  border-bottom: 1px solid #242529 !important;
+  background-color: var(--theme-bg-secondary, #16171a) !important;
+  border-bottom: 1px solid var(--theme-border, #242529) !important;
   display: flex !important;
   flex-direction: row !important;
   align-items: center !important;
@@ -145,7 +145,8 @@ button, input, select, .no-drag,
   max-width: 220px !important;
   min-width: 110px !important;
   background-color: transparent !important;
-  color: #9ca3af !important;
+  color: var(--theme-fg, #9ca3af) !important;
+  opacity: 0.7;
   font-size: 12px !important;
   font-weight: 500 !important;
   border-top-left-radius: 6px !important;
@@ -166,15 +167,17 @@ button, input, select, .no-drag,
 }
 
 .tabby-tab:hover {
-  background-color: #1c1d21 !important;
-  color: #e4e4e7 !important;
+  background-color: color-mix(in srgb, var(--theme-bg, #1c1d21) 90%, white 10%) !important;
+  color: var(--theme-fg, #e4e4e7) !important;
+  opacity: 1;
 }
 
 .tabby-tab.active {
-  background-color: #212226 !important;
-  color: #ffffff !important;
-  border-color: #2e3036 !important;
-  border-top-color: #3b82f6 !important; /* Subtle blue top border */
+  background-color: var(--theme-bg-secondary, #212226) !important;
+  color: var(--theme-fg, #ffffff) !important;
+  border-color: var(--theme-border, #2e3036) !important;
+  border-top-color: var(--theme-accent, #3b82f6) !important; /* Subtle blue top border */
+  opacity: 1;
 }
 
 /* Tab index badge */
@@ -249,14 +252,14 @@ button, input, select, .no-drag,
   margin-left: auto !important;
 }
 
-/* Window Action Button — add scale feedback on press */
+/* Window Action Button — themed, add scale feedback on press */
 .window-action-btn {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
   width: 32px !important;
   height: 30px !important;
-  color: #d4d4d8 !important;
+  color: var(--theme-fg, #d4d4d8) !important;
   background: transparent !important;
   border: none !important;
   border-radius: 4px !important;
@@ -270,8 +273,8 @@ button, input, select, .no-drag,
 }
 
 .window-action-btn:hover {
-  background-color: rgba(255, 255, 255, 0.1) !important;
-  color: #ffffff !important;
+  background-color: color-mix(in srgb, var(--theme-fg, #ffffff) 10%, transparent) !important;
+  color: var(--theme-fg, #ffffff) !important;
 }
 
 .window-action-btn:active {
@@ -295,7 +298,7 @@ button, input, select, .no-drag,
 #terminal-container {
   flex: 1 1 auto !important;
   position: relative !important;
-  background-color: #141416 !important;
+  background-color: var(--theme-bg, #141416) !important;
   overflow: hidden !important;
   display: flex !important;
   flex-direction: column !important;
@@ -320,7 +323,7 @@ button, input, select, .no-drag,
   min-width: 0 !important;
   /* padding moved to .xterm so gutter is not clipped */
   padding: 0 !important;
-  background-color: #141416 !important;
+  background-color: var(--theme-bg, #141416) !important;
   overflow: visible !important;
   pointer-events: auto !important;
   /* Tab switch cross-fade — see App.tsx terminal map (opacity transition) */
@@ -394,6 +397,14 @@ button, input, select, .no-drag,
 }
 .drawer-scrim {
   will-change: opacity;
+}
+
+/* Transparent glass — when html background is transparent (transparent theme), add blur to terminal layers */
+html[style*="transparent"] #tabbar,
+html[style*="transparent"] #terminal-container,
+html[style*="transparent"] .terminal-wrapper {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 /* Respect user motion preferences — REQUIRED for a11y (WCAG 2.3.3) */

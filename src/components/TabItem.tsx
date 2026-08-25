@@ -1,6 +1,6 @@
 import React from "react";
 import { Radio, X } from "lucide-react";
-import { Tab } from "../types/terminal";
+import { Tab, ThemeColors } from "../types/terminal";
 
 /**
  * Props for a single tab item in the tab bar.
@@ -30,6 +30,7 @@ interface TabItemProps {
   onSelect: (id: string) => void;
   onClose: (id: string, e: React.MouseEvent) => void;
   onContextMenu: (id: string, x: number, y: number) => void;
+  themeColors?: ThemeColors;
 }
 
 /**
@@ -56,7 +57,14 @@ export const TabItem: React.FC<TabItemProps> = ({
   onSelect,
   onClose,
   onContextMenu,
+  themeColors,
 }) => {
+  const activeStyle = isActive && themeColors ? ({
+    backgroundColor: themeColors.black,
+    color: themeColors.foreground,
+    borderColor: themeColors.brightBlack,
+    borderTopColor: themeColors.blue,
+  } as React.CSSProperties) : undefined;
   // Debounce guard — prevents rapid double middle-clicks from firing close twice
   // or from re-triggering close after the tab has already been removed.
   // Also used to suppress the Linux primary-selection paste that fires on
@@ -175,6 +183,7 @@ export const TabItem: React.FC<TabItemProps> = ({
       onAuxClick={handleAuxClick}
       onContextMenu={handleContextMenu}
       title={isShared && sharePort ? `${tab.title} — shared :${sharePort}` : tab.title}
+      style={activeStyle}
     >
       {/* Numeric badge showing 1-based tab index */}
       <span className="tab-index-badge">{index + 1}</span>

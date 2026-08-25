@@ -1,6 +1,6 @@
 import React from "react";
 import { Plus, Settings, Minus, Square, X } from "lucide-react";
-import { Tab } from "../types/terminal";
+import { Tab, ThemeColors } from "../types/terminal";
 import { TabItem } from "./TabItem";
 
 /**
@@ -31,6 +31,7 @@ interface TabbarProps {
   onMinimize: () => void;
   onMaximize: () => void;
   onCloseWindow: () => void;
+  themeColors?: ThemeColors;
 }
 
 /**
@@ -64,9 +65,19 @@ export const Tabbar: React.FC<TabbarProps> = ({
   onMinimize,
   onMaximize,
   onCloseWindow,
+  themeColors,
 }) => {
+  const bg = themeColors?.background ?? "#16171a";
+  const fg = themeColors?.foreground ?? "#e4e4e7";
+  const border = themeColors?.brightBlack ?? "#242529";
+  const dividerBg = themeColors?.brightBlack ?? "#2e3036";
   return (
-    <header id="tabbar" className="tabbar-container" data-tauri-drag-region>
+    <header
+      id="tabbar"
+      className="tabbar-container"
+      data-tauri-drag-region
+      style={{ backgroundColor: bg, borderBottomColor: border, color: fg } as React.CSSProperties}
+    >
       {/* Left section: horizontally scrollable tabs + new-tab button.
           Both the container and the tabs area are drag regions, but each TabItem
           is `no-drag` so selecting/closing a tab does not drag the window. */}
@@ -86,6 +97,7 @@ export const Tabbar: React.FC<TabbarProps> = ({
                 onSelect={onSelectTab}
                 onClose={onCloseTab}
                 onContextMenu={onContextMenu}
+                themeColors={themeColors}
               />
             );
           })}
@@ -119,10 +131,10 @@ export const Tabbar: React.FC<TabbarProps> = ({
           onClick={onToggleSettings}
           type="button"
         >
-          <Settings className="w-4 h-4 text-zinc-300" />
+          <Settings className="w-4 h-4" style={{ color: fg }} />
         </button>
         {/* Thin vertical divider between app actions and window chrome */}
-        <div className="no-drag" style={{ width: "1px", height: "16px", backgroundColor: "#2e3036", margin: "0 4px" }} />
+        <div className="no-drag" style={{ width: "1px", height: "16px", backgroundColor: dividerBg, margin: "0 4px" }} />
         <button
           id="win-minimize"
           className="window-action-btn no-drag"
@@ -130,7 +142,7 @@ export const Tabbar: React.FC<TabbarProps> = ({
           onClick={onMinimize}
           type="button"
         >
-          <Minus className="w-3.5 h-3.5 text-zinc-300" />
+          <Minus className="w-3.5 h-3.5" style={{ color: fg }} />
         </button>
         <button
           id="win-maximize"
@@ -139,7 +151,7 @@ export const Tabbar: React.FC<TabbarProps> = ({
           onClick={onMaximize}
           type="button"
         >
-          <Square className="w-3.5 h-3.5 text-zinc-300" />
+          <Square className="w-3.5 h-3.5" style={{ color: fg }} />
         </button>
         <button
           id="win-close"
@@ -148,7 +160,7 @@ export const Tabbar: React.FC<TabbarProps> = ({
           onClick={onCloseWindow}
           type="button"
         >
-          <X className="w-4 h-4 text-zinc-300" />
+          <X className="w-4 h-4" style={{ color: fg }} />
         </button>
       </div>
     </header>

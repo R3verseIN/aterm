@@ -24,7 +24,25 @@ import { z } from "zod";
  */
 export const ConfigSchema = z
   .object({
-    theme: z.enum(["aterm-dark", "aterm-light", "nord"]).default("aterm-dark"),
+    theme: z
+      .enum([
+        "aterm-dark",
+        "aterm-light",
+        "nord",
+        "pitchblack",
+        "transparent",
+        "dracula",
+        "gruvbox-dark",
+        "gruvbox-light",
+        "tokyo-night",
+        "catppuccin-mocha",
+        "catppuccin-latte",
+        "solarized-dark",
+        "solarized-light",
+        "monokai",
+        "one-dark",
+      ])
+      .default("aterm-dark"),
     // fontSize must be an integer to match Rust `u8` (src-tauri/src/config.rs:default_font_size);
     // floats like 22.5 would pass `z.number().min().max()` but fail serde `u8` deserialization.
     fontSize: z.number().int().min(8).max(32).default(12),

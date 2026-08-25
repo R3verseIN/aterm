@@ -88,6 +88,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       cursorBlink: true,
       lineHeight: 1.0,
       allowProposedApi: true,
+      allowTransparency: true,
       scrollback: config.scrollback ?? 1500,
       scrollOnUserInput: true,
     });
