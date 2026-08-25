@@ -46,9 +46,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
   onSave,
   onClose,
 }) => {
-  // For transparent theme keep drawer opaque for readability (not glass)
-  const rawPanelBg = themeColors?.background ?? "#18191c";
-  const panelBg = config.theme === "transparent" ? "#18181b" : rawPanelBg;
+  const panelBg = themeColors?.background ?? "#18191c";
   const panelBorder = themeColors?.brightBlack ?? "#27272a";
   const panelFg = themeColors?.foreground ?? "#e4e4e7";
   const isLight = ["aterm-light", "gruvbox-light", "catppuccin-latte", "solarized-light"].includes(config.theme);
@@ -139,7 +137,6 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                 <option value="aterm-light">Aterm Light</option>
                 <option value="nord">Nord Theme</option>
                 <option value="pitchblack">Pitch Black (#000000)</option>
-                <option value="transparent">Transparent (Glass)</option>
                 <option value="dracula">Dracula</option>
                 <option value="gruvbox-dark">Gruvbox Dark</option>
                 <option value="gruvbox-light">Gruvbox Light</option>

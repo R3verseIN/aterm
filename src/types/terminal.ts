@@ -20,7 +20,6 @@ export type ThemeName =
   | "aterm-light"
   | "nord"
   | "pitchblack"
-  | "transparent"
   | "dracula"
   | "gruvbox-dark"
   | "gruvbox-light"

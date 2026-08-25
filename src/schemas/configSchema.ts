@@ -30,7 +30,6 @@ export const ConfigSchema = z
         "aterm-light",
         "nord",
         "pitchblack",
-        "transparent",
         "dracula",
         "gruvbox-dark",
         "gruvbox-light",

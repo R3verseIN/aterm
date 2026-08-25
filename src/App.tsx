@@ -153,29 +153,6 @@ const themes: Record<ThemeName, ThemeColors> = {
     brightCyan: "#8be9fd",
     brightWhite: "#ffffff",
   },
-  transparent: {
-    background: "rgba(20,20,22,0.65)",
-    foreground: "#e4e4e7",
-    cursor: "#60a5fa",
-    cursorAccent: "rgba(20,20,22,0.65)",
-    selectionBackground: "rgba(39,39,42,0.6)",
-    black: "#18181b",
-    red: "#f87171",
-    green: "#4ade80",
-    yellow: "#facc15",
-    blue: "#60a5fa",
-    magenta: "#c084fc",
-    cyan: "#38bdf8",
-    white: "#e4e4e7",
-    brightBlack: "#52525b",
-    brightRed: "#f87171",
-    brightGreen: "#4ade80",
-    brightYellow: "#facc15",
-    brightBlue: "#60a5fa",
-    brightMagenta: "#c084fc",
-    brightCyan: "#38bdf8",
-    brightWhite: "#ffffff",
-  },
   dracula: {
     background: "#282a36",
     foreground: "#f8f8f2",
@@ -772,9 +749,10 @@ export const App: React.FC = () => {
 
   const currentThemeColors = themes[config.theme] || themes["aterm-dark"];
 
-  // Propagate theme vars to :root so html,body and all descendants see them (fixes light/transparent not theming top)
+  // Propagate theme vars to :root so html,body and all descendants see them (fixes light not theming top)
   useEffect(() => {
     const root = document.documentElement;
+    root.dataset.theme = config.theme;
     root.style.setProperty("--theme-bg", currentThemeColors.background);
     root.style.setProperty("--theme-bg-secondary", currentThemeColors.background);
     root.style.setProperty("--theme-fg", currentThemeColors.foreground);
@@ -783,17 +761,9 @@ export const App: React.FC = () => {
     root.style.setProperty("--theme-selection", currentThemeColors.selectionBackground);
     document.body.style.backgroundColor = currentThemeColors.background;
     document.body.style.color = currentThemeColors.foreground;
-    if (config.theme === "transparent") {
-      root.style.backgroundColor = "transparent";
-      document.body.style.backgroundColor = "transparent";
-      const rootEl = document.getElementById("root");
-      if (rootEl) {
-        rootEl.style.backgroundColor = "transparent";
-        (rootEl as HTMLElement).style.setProperty("--theme-bg", "transparent");
-      }
-    } else {
-      root.style.backgroundColor = "";
-    }
+    root.style.backgroundColor = "";
+    const rootEl = document.getElementById("root");
+    if (rootEl) rootEl.style.backgroundColor = "";
   }, [currentThemeColors, config.theme]);
 
   const themeVars = {
