@@ -102,21 +102,15 @@ fn append_output(id: &str, data: &[u8]) {
     crate::server::state::notify_output_waiters(id, ver);
 }
 
-/// Explicit clear of a session's output history (called via POST /clear or Tauri clear_terminal).
-/// Simple: drain the ring and invalidate screenshot. Bumps version so hold-till-output waiters wake.
+/// Explicit clear — simple: just execute `clear` (or `cls` on Windows) in the shell.
+/// No manual buffer manipulation — let the shell emit ESC[2J and let append_output's
+/// contains_clear_sequence auto-wipe the 512KB ring so HTTP and xterm stay in sync.
 pub fn clear_output(id: &str) -> Result<(), String> {
     if !session_exists(id) {
         return Err(format!("session not found: {}", id));
     }
-    if let Ok(mut map) = outputs().lock() {
-        if let Some(buf) = map.get_mut(id) {
-            buf.clear();
-        } else {
-            map.insert(id.to_string(), Vec::new());
-        }
-    }
-    let ver = bump_version(id);
-    crate::server::state::notify_output_waiters(id, ver);
+    let data = if cfg!(windows) { "cls\r" } else { "clear\r" };
+    write_to_session(id, data)?;
     crate::server::state::remove_screenshot(id);
     Ok(())
 }

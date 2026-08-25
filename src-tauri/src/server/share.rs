@@ -11,8 +11,8 @@ use tauri::{AppHandle, Emitter};
 use tower_http::cors::{Any, CorsLayer};
 
 use super::handlers::{
-    clear_output_scoped, get_cwd_scoped, get_history_scoped, get_output_scoped, get_screenshot_current_scoped,
-    get_screenshot_scoped, health_scoped, post_input_scoped, post_resize_scoped,
+    clear_output_scoped, get_cwd_scoped, get_history_scoped, get_screenshot_scoped, health_scoped,
+    post_input_scoped, post_resize_scoped,
 };
 use super::state::{shares, SharedInfo, SharedServer};
 
@@ -46,11 +46,11 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
             let id = id_clone.clone();
             move || health_scoped(id.clone())
         }))
-        .route("/output", get({
-            let id = id_clone.clone();
-            move |q: axum::extract::Query<super::handlers::OutputQuery>| get_output_scoped(q, id.clone())
-        }))
         .route("/history", get({
+            let id = id_clone.clone();
+            move || get_history_scoped(id.clone())
+        }))
+        .route("/output", get({
             let id = id_clone.clone();
             move || get_history_scoped(id.clone())
         }))
@@ -66,24 +66,35 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
             let id = id_clone.clone();
             move |b: axum::Json<super::handlers::ResizeReq>| post_resize_scoped(b, id.clone())
         }))
-        .route("/clear", post({
-            let id = id_clone.clone();
-            let app = app.clone();
-            move || {
-                let id2 = id.clone();
-                let app2 = app.clone();
-                async move {
-                    let res = clear_output_scoped(id2.clone()).await;
-                    // Notify frontend to clear xterm viewport + scrollback (straightforward, no stale UI)
-                    let _ = app2.emit(&format!("clear-terminal:{}", id2), ());
-                    res
+        .route(
+            "/clear",
+            get({
+                let id = id_clone.clone();
+                let app = app.clone();
+                move || {
+                    let id2 = id.clone();
+                    let app2 = app.clone();
+                    async move {
+                        let res = clear_output_scoped(id2.clone()).await;
+                        let _ = app2.emit(&format!("clear-terminal:{}", id2), ());
+                        res
+                    }
                 }
-            }
-        }))
-        .route("/screenshot/current", get({
-            let id = id_clone.clone();
-            move |q: axum::extract::Query<super::handlers::ScreenshotQuery>| get_screenshot_current_scoped(q, id.clone())
-        }))
+            })
+            .post({
+                let id = id_clone.clone();
+                let app = app.clone();
+                move || {
+                    let id2 = id.clone();
+                    let app2 = app.clone();
+                    async move {
+                        let res = clear_output_scoped(id2.clone()).await;
+                        let _ = app2.emit(&format!("clear-terminal:{}", id2), ());
+                        res
+                    }
+                }
+            }),
+        )
         .route("/screenshot", get({
             let id = id_clone.clone();
             let app = app.clone();

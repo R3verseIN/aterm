@@ -65,21 +65,12 @@ pub fn get_share(id: &str) -> Option<SharedInfo> {
 // via oneshot waiters. Straightforward, no instant stale path.
 // ---------------------------------------------------------------------------
 
-static SCREENSHOTS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
-
-fn screenshots() -> &'static Mutex<HashMap<String, Vec<u8>>> {
-    SCREENSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 /// Store a PNG screenshot for a tab (called from Tauri command `store_screenshot`).
-/// Decodes base64, caches for current endpoint, and wakes any `GET /screenshot` waiters.
+/// Decodes base64 and wakes any `GET /screenshot` waiters holding the connection.
+/// No persistent cache — purely a rendezvous to keep logic fresh-only.
 pub fn store_screenshot(id: &str, png_b64: &str) -> Result<(), String> {
     let bytes = base64_decode(png_b64)?;
     println!("[screenshot] store for {}: {} bytes b64 -> {} bytes png", id, png_b64.len(), bytes.len());
-    {
-        let mut map = screenshots().lock().unwrap_or_else(|e| e.into_inner());
-        map.insert(id.to_string(), bytes.clone());
-    }
     // Wake any `GET /screenshot` handlers holding a wait for this id (10 s hold)
     if let Some(waiters_vec) = waiters()
         .lock()
@@ -98,17 +89,8 @@ pub fn store_screenshot(id: &str, png_b64: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn get_screenshot(id: &str) -> Option<Vec<u8>> {
-    let map = screenshots().lock().unwrap_or_else(|e| e.into_inner());
-    map.get(id).cloned()
-}
-
-/// Remove a tab's pending screenshot waiters/errors and cached image (on clear/unshare/close).
+/// Remove a tab's pending screenshot waiters/errors (on clear/unshare/close).
 pub fn remove_screenshot(id: &str) {
-    {
-        let mut map = screenshots().lock().unwrap_or_else(|e| e.into_inner());
-        map.remove(id);
-    }
     // Also clear last error and pending waiters for this tab
     screenshot_errors()
         .lock()
