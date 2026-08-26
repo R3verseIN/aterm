@@ -27,3 +27,11 @@ libc = "0.2"
 # HTTP API (per-tab, localhost only). Axum 0.7 + tower-http for CORS.
 axum = { version = "0.7", features = ["json"] }
 tower-http = { version = "0.6", features = ["cors"] }
+# Clean crates — replace manual duct-tape + fix hangs
+strip-ansi-escapes = "0.2"
+base64 = "0.22"
+regex = "1.12"
+vt100 = "0.15"
+dashmap = "6.1"
+event-listener = "5.4"
+aho-corasick = "1.1"

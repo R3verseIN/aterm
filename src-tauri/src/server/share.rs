@@ -11,8 +11,7 @@ use tauri::{AppHandle, Emitter};
 use tower_http::cors::{Any, CorsLayer};
 
 use super::handlers::{
-    clear_output_scoped, get_cwd_scoped, get_history_scoped, get_screenshot_scoped, health_scoped,
-    post_input_scoped, post_resize_scoped,
+    clear_output_scoped, get_output_scoped, get_screenshot_scoped, health_scoped, post_input_scoped,
 };
 use super::state::{shares, SharedInfo, SharedServer};
 
@@ -39,49 +38,24 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
     let url = format!("http://127.0.0.1:{}", port);
 
     // Build a router scoped to this id — no :id param needed, port IS the id
-    // Straightforward: every GET is no-store/fresh, POST /clear wipes logs + screenshot waiters
+    // Straightforward: every GET is no-store/fresh, GET /clear wipes logs + screenshot waiters
     let id_clone = id.clone();
     let router = Router::new()
         .route("/health", get({
             let id = id_clone.clone();
             move || health_scoped(id.clone())
         }))
-        .route("/history", get({
-            let id = id_clone.clone();
-            move || get_history_scoped(id.clone())
-        }))
         .route("/output", get({
             let id = id_clone.clone();
-            move || get_history_scoped(id.clone())
+            move || get_output_scoped(id.clone())
         }))
         .route("/input", post({
             let id = id_clone.clone();
             move |b: axum::Json<super::handlers::WriteReq>| post_input_scoped(b, id.clone())
         }))
-        .route("/cwd", get({
-            let id = id_clone.clone();
-            move || get_cwd_scoped(id.clone())
-        }))
-        .route("/resize", post({
-            let id = id_clone.clone();
-            move |b: axum::Json<super::handlers::ResizeReq>| post_resize_scoped(b, id.clone())
-        }))
         .route(
             "/clear",
             get({
-                let id = id_clone.clone();
-                let app = app.clone();
-                move || {
-                    let id2 = id.clone();
-                    let app2 = app.clone();
-                    async move {
-                        let res = clear_output_scoped(id2.clone()).await;
-                        let _ = app2.emit(&format!("clear-terminal:{}", id2), ());
-                        res
-                    }
-                }
-            })
-            .post({
                 let id = id_clone.clone();
                 let app = app.clone();
                 move || {
@@ -119,25 +93,22 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
 
     // Store handle — handle TOCTOU race: if another concurrent share_tab already
     // inserted for this id while we were binding, abort the old listener and keep the new one.
-    // Use poison recovery (into_inner) so a poisoned mutex doesn't permanently break sharing.
-    {
-        let mut map = shares().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(old) = map.insert(id.clone(), SharedServer { port, handle }) {
+    // DashMap is lock-free sharded, no poisoning.
+    let should_rollback = {
+        if let Some(old) = shares().insert(id.clone(), SharedServer { port, handle }) {
             old.handle.abort();
-            // Also clean old discovery files before overwriting (port changed)
             if let Some(dir) = dirs::config_dir().map(|d| d.join("aterm").join("shares")) {
                 let _ = std::fs::remove_file(dir.join(format!("{}.json", id)));
             }
             eprintln!("[aterm share] race: replaced existing share for {} (old port {})", id, old.port);
         }
-        // Double-check idempotency after insert: if session disappeared between pre-check and insert,
-        // validate again and rollback if needed.
-        if !crate::pty::session_exists(&id) {
-            if let Some(entry) = map.remove(&id) {
-                entry.handle.abort();
-            }
-            return Err(format!("session not found (race): {}", id));
+        !crate::pty::session_exists(&id)
+    };
+    if should_rollback {
+        if let Some((_, entry)) = shares().remove(&id) {
+            entry.handle.abort();
         }
+        return Err(format!("session not found (race): {}", id));
     }
 
     // Discovery files for agents: per-tab JSON + tmp port file for `curl $(cat /tmp/aterm-*.port)/health`
@@ -170,8 +141,8 @@ pub async fn share_tab(app: AppHandle, id: String) -> Result<SharedInfo, String>
 /// Unshare a tab — abort its dedicated server and clean discovery files.
 /// Idempotent.
 pub fn unshare_tab(id: &str) -> Result<(), String> {
-    let mut map = shares().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(entry) = map.remove(id) {
+    let entry_opt = shares().remove(id).map(|(_, v)| v);
+    if let Some(entry) = entry_opt {
         entry.handle.abort();
         // Clean per-tab discovery files
         if let Some(dir) = dirs::config_dir().map(|d| d.join("aterm").join("shares")) {
@@ -184,7 +155,7 @@ pub fn unshare_tab(id: &str) -> Result<(), String> {
         let _ = std::fs::remove_file(format!("/tmp/aterm-{}.url", short));
         println!("[aterm share] tab {} unshared (port {})", id, entry.port);
     }
-    // Evict screenshot and output waiters — keeps memory bounded
+    // Evict screenshot and output waiters — drop SHARES before locking other maps (avoid inversion)
     super::state::remove_screenshot(id);
     super::state::remove_output_waiters(id);
     Ok(())
@@ -202,12 +173,7 @@ pub fn list_shares() -> Vec<SharedInfo> {
 
 /// Cleanup all shares (called on app exit or startup to purge stale files).
 pub fn cleanup_all() {
-    let ids: Vec<String> = shares()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .keys()
-        .cloned()
-        .collect();
+    let ids: Vec<String> = shares().iter().map(|e| e.key().clone()).collect();
     for id in ids {
         let _ = unshare_tab(&id);
     }

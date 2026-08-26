@@ -1,7 +1,9 @@
+use aho_corasick::AhoCorasick;
+use dashmap::DashMap;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
-use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::LazyLock;
 use tauri::{AppHandle, Emitter};
 
 // Type aliases for trait objects to keep Session readable.
@@ -20,83 +22,66 @@ struct Session {
     master: MasterBox,
     writer: Arc<Mutex<WriterBox>>,
     child: Arc<Mutex<ChildBox>>,
+    tmp_rc: Option<String>,
 }
 
-/// Global session registry — lazily initialized HashMap from UUID string to Session.
-/// OnceLock ensures single initialization; Mutex guards concurrent access from Tauri command
-/// handlers (which run on the async runtime) and the reader threads. The map is never cleared
-/// except via close_session or pty exit.
-static SESSIONS: OnceLock<Mutex<HashMap<String, Session>>> = OnceLock::new();
+/// Global session registry — Mutex still needed because Session contains `dyn MasterPty + Send` (not Sync, so DashMap fails)
+static SESSIONS: OnceLock<std::sync::Mutex<std::collections::HashMap<String, Session>>> = OnceLock::new();
 
-/// Per-session output history for HTTP API polling.
-/// Stores raw bytes emitted by the reader thread, capped to ~512KB per session (ring).
-/// Simple dump-all: `GET /output` returns the whole buffer (no cursor).
-static OUTPUTS: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+/// Per-session output history for HTTP API polling — DashMap sharded, no poisoning
+static OUTPUTS: OnceLock<DashMap<String, Vec<u8>>> = OnceLock::new();
 
-/// Monotonic version per session — bumped on every append/clear so hold-till-output can detect change even when total stays capped at 512KB.
-static OUTPUT_VERSIONS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+/// Monotonic version per session
+static OUTPUT_VERSIONS: OnceLock<DashMap<String, u64>> = OnceLock::new();
 
-/// Accessor for the global SESSIONS map, initializing it on first call.
-fn sessions() -> &'static Mutex<HashMap<String, Session>> {
-    SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+fn sessions() -> &'static std::sync::Mutex<std::collections::HashMap<String, Session>> {
+    SESSIONS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-fn outputs() -> &'static Mutex<HashMap<String, Vec<u8>>> {
-    OUTPUTS.get_or_init(|| Mutex::new(HashMap::new()))
+pub(crate) fn outputs() -> &'static DashMap<String, Vec<u8>> {
+    OUTPUTS.get_or_init(DashMap::new)
 }
 
-fn output_versions() -> &'static Mutex<HashMap<String, u64>> {
-    OUTPUT_VERSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+pub(crate) fn output_versions() -> &'static DashMap<String, u64> {
+    OUTPUT_VERSIONS.get_or_init(DashMap::new)
 }
 
 fn bump_version(id: &str) -> u64 {
-    let mut map = output_versions().lock().unwrap_or_else(|e| e.into_inner());
-    let e = map.entry(id.to_string()).or_insert(0);
-    *e = e.wrapping_add(1);
-    *e
+    let mut entry = output_versions().entry(id.to_string()).or_insert(0);
+    *entry = entry.wrapping_add(1);
+    *entry
 }
 
 pub fn get_version(id: &str) -> u64 {
-    output_versions().lock().unwrap_or_else(|e| e.into_inner()).get(id).copied().unwrap_or(0)
+    output_versions().get(id).map(|v| *v).unwrap_or(0)
 }
 
 /// Narrow auto-clear: only real clear sequences (`clear`/`reset`/`Ctrl-L`).
 /// Matches `\x0c`, `ESC c`, `ESC[2J`, `ESC[3J` — NOT `ESC[J` which appears in normal prompts (kali).
+/// Uses `aho-corasick` single-pass on &[u8] (no windows overlap bug).
+static CLEAR_AC: LazyLock<AhoCorasick> = LazyLock::new(|| {
+    AhoCorasick::new(["\x0c", "\x1b\x63", "\x1b[2J", "\x1b[3J"]).unwrap()
+});
 fn contains_clear_sequence(data: &[u8]) -> bool {
-    if data.contains(&0x0c) {
-        return true;
-    }
-    if data.windows(2).any(|w| w == [0x1b, b'c']) {
-        return true;
-    }
-    if data.windows(4).any(|w| w == [0x1b, b'[', b'2', b'J'] || w == [0x1b, b'[', b'3', b'J']) {
-        return true;
-    }
-    false
+    CLEAR_AC.is_match(data)
 }
 
 /// Append data to the history ring for a session, truncating to 512KB.
-/// Syncs HTTP with xterm: if data contains a clear-screen sequence (`clear` typed),
-/// wipe the ring so `GET /output` (dump-all) matches what the user sees.
 fn append_output(id: &str, data: &[u8]) {
     if contains_clear_sequence(data) {
-        if let Ok(mut map) = outputs().lock() {
-            if let Some(buf) = map.get_mut(id) {
-                buf.clear();
-            }
+        if let Some(mut buf) = outputs().get_mut(id) {
+            buf.clear();
         }
         crate::server::state::remove_screenshot(id);
     }
-    let mut map = match outputs().lock() {
-        Ok(m) => m,
-        Err(_) => return,
-    };
-    let buf = map.entry(id.to_string()).or_default();
-    buf.extend_from_slice(data);
-    const MAX: usize = 512 * 1024;
-    if buf.len() > MAX {
-        let drain = buf.len() - MAX;
-        buf.drain(0..drain);
+    {
+        let mut buf = outputs().entry(id.to_string()).or_default();
+        buf.extend_from_slice(data);
+        const MAX: usize = 512 * 1024;
+        if buf.len() > MAX {
+            let drain = buf.len() - MAX;
+            buf.drain(0..drain);
+        }
     }
     let ver = bump_version(id);
     crate::server::state::notify_output_waiters(id, ver);
@@ -117,18 +102,17 @@ pub fn clear_output(id: &str) -> Result<(), String> {
 
 /// Centralized cleanup: remove all state for a session id.
 pub fn cleanup_state(id: &str) {
-    {
-        let mut sessions_map = sessions().lock().unwrap_or_else(|e| e.into_inner());
-        sessions_map.remove(id);
+    let tmp_rc_opt = {
+        let mut map = sessions().lock().unwrap_or_else(|e| e.into_inner());
+        map.remove(id).and_then(|s| s.tmp_rc)
+    };
+    if let Some(p) = tmp_rc_opt {
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_dir_all(&p);
+        let _ = std::fs::remove_file(format!("{}/.zshrc", p));
     }
-    {
-        let mut out = outputs().lock().unwrap_or_else(|e| e.into_inner());
-        out.remove(id);
-    }
-    {
-        let mut ver = output_versions().lock().unwrap_or_else(|e| e.into_inner());
-        ver.remove(id);
-    }
+    outputs().remove(id);
+    output_versions().remove(id);
     crate::server::state::remove_screenshot(id);
     crate::server::state::remove_output_waiters(id);
 }
@@ -142,7 +126,6 @@ pub fn cleanup_state(id: &str) {
 /// or the symlink cannot be read (e.g., shell already exited).
 /// On non-Linux platforms this returns an error (unsupported — future: use `proc_pidinfo` on macOS).
 pub fn get_cwd(id: &str) -> Result<String, String> {
-    // Poison recovery: a prior panic while holding SESSIONS shouldn't permanently brick get_cwd.
     let map = sessions().lock().unwrap_or_else(|e| e.into_inner());
     let session = map.get(id).ok_or_else(|| format!("session not found: {}", id))?;
     let pid = session
@@ -213,9 +196,32 @@ pub fn create_session(app: AppHandle, cols: u16, rows: u16, cwd: Option<String>)
         .map_err(|e| format!("failed to open pty: {}", e))?;
 
     // Build the shell command with env and optional cwd
+    // Shell integration: for bash, use a temp rcfile that sources ~/.bashrc then
+    // installs invisible OSC 633;D prompt marker (stable for any command, no per-request `; printf`).
+    // This keeps `POST /input` hold prompt-based, screenshot-clean, and syntax-agnostic.
+    let mut _tmp_rc_path: Option<String> = None;
     let mut cmd = CommandBuilder::new(&shell);
+    if shell.contains("bash") {
+        let rc_path = format!("/tmp/aterm-{}-bashrc", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+        let rc_content = "[ -f ~/.bashrc ] && source ~/.bashrc\n__aterm_precmd() { printf '\\033]633;D;%s\\007' \"$?\"; printf '\\033]633;A\\007'; }\nPROMPT_COMMAND=\"__aterm_precmd;${PROMPT_COMMAND:+$PROMPT_COMMAND; }\"\n";
+        if std::fs::write(&rc_path, rc_content).is_ok() {
+            cmd.args(["--rcfile", &rc_path, "-i"]);
+            _tmp_rc_path = Some(rc_path);
+        }
+    } else if shell.contains("zsh") {
+        let zdot = format!("/tmp/aterm-{}-zdot", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+        let _ = std::fs::create_dir_all(&zdot);
+        let zrc = format!("{}/.zshrc", zdot);
+        let zcontent = "[ -f ~/.zshrc ] && source ~/.zshrc\n__aterm_precmd() { printf '\\033]633;D;%s\\007' \"$?\"; printf '\\033]633;A\\007'; }\nif (( $+functions[precmd_functions] )); then precmd_functions+=(__aterm_precmd); else precmd() { __aterm_precmd; }; fi\n";
+        if std::fs::write(&zrc, zcontent).is_ok() {
+            cmd.env("ZDOTDIR", zdot.clone());
+            _tmp_rc_path = Some(zdot);
+        }
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    // Inherit aterm marker so handlers can know integration is active (optional)
+    cmd.env("ATERM_SHELL_INTEGRATION", "1");
     if let Some(dir) = cwd {
         if !dir.is_empty() && std::path::Path::new(&dir).is_dir() {
             cmd.cwd(dir);
@@ -243,8 +249,8 @@ pub fn create_session(app: AppHandle, cols: u16, rows: u16, cwd: Option<String>)
     let id_clone = id.clone();
 
     // Init empty history for this session
-    outputs().lock().unwrap().insert(id.clone(), Vec::new());
-    output_versions().lock().unwrap().insert(id.clone(), 0);
+    outputs().insert(id.clone(), Vec::new());
+    output_versions().insert(id.clone(), 0);
 
     std::thread::spawn(move || {
         let mut buf = vec![0u8; 32 * 1024];
@@ -291,11 +297,12 @@ pub fn create_session(app: AppHandle, cols: u16, rows: u16, cwd: Option<String>)
         master: pair.master,
         writer: writer_arc,
         child: child_arc,
+        tmp_rc: _tmp_rc_path.clone(),
     };
 
     sessions()
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .insert(id.clone(), session);
 
     Ok(id)
@@ -346,17 +353,23 @@ pub fn close_session(id: &str) -> Result<(), String> {
         map.remove(id)
     };
     if let Some(session) = session_opt {
+        if let Some(ref p) = session.tmp_rc {
+            let _ = std::fs::remove_file(p);
+            let _ = std::fs::remove_dir_all(p);
+            let _ = std::fs::remove_file(format!("{}/.zshrc", p));
+        }
         {
             let mut child = session.child.lock().unwrap_or_else(|e| e.into_inner());
             let _ = child.kill();
         }
         drop(session);
-        // Centralized cleanup for OUTPUTS + screenshot
-        cleanup_state(id);
+        outputs().remove(id);
+        output_versions().remove(id);
+        crate::server::state::remove_screenshot(id);
+        crate::server::state::remove_output_waiters(id);
         let _ = crate::server::unshare_tab(id);
         Ok(())
     } else {
-        // Covers race where reader thread already removed SESSIONS
         cleanup_state(id);
         let _ = crate::server::unshare_tab(id);
         Err(format!("session not found: {}", id))
@@ -386,8 +399,6 @@ pub fn list_sessions() -> Vec<SessionMeta> {
         .collect()
 }
 
-/// Whether a session id exists
-/// Poison recovery keeps existence checks alive after a lock poisoning event.
 pub fn session_exists(id: &str) -> bool {
     sessions()
         .lock()
@@ -395,12 +406,56 @@ pub fn session_exists(id: &str) -> bool {
         .contains_key(id)
 }
 
-/// Get output snapshot for HTTP: returns (data_bytes, total_len, version).
-/// Simple dump-all: returns the whole 512KB ring (no cursor). Version is monotonic per append/clear.
-/// Poison recovery.
+pub fn has_integration(id: &str) -> bool {
+    sessions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+        .and_then(|s| s.tmp_rc.clone())
+        .is_some()
+}
+
 pub fn get_output(id: &str) -> Result<(Vec<u8>, usize, u64), String> {
-    let map = outputs().lock().unwrap_or_else(|e| e.into_inner());
-    let buf = map.get(id).ok_or_else(|| format!("session not found: {}", id))?;
+    let entry = outputs().get(id).ok_or_else(|| format!("session not found: {}", id))?;
+    let (cloned, len) = (entry.clone(), entry.len());
+    drop(entry);
     let ver = get_version(id);
-    Ok((buf.clone(), buf.len(), ver))
+    Ok((cloned, len, ver))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_seq_aho_detects_esc2j() {
+        assert!(contains_clear_sequence(b"\x1b[2J"));
+        assert!(contains_clear_sequence(b"\x1b[3J"));
+        assert!(contains_clear_sequence(b"\x0c"));
+        assert!(contains_clear_sequence(b"\x1b\x63"));
+        assert!(!contains_clear_sequence(b"\x1b[J"));
+        assert!(!contains_clear_sequence(b"hello"));
+    }
+
+    #[test]
+    fn version_bump_wraps() {
+        let id = "test-ver";
+        output_versions().insert(id.to_string(), u64::MAX);
+        let v = bump_version(id);
+        assert_eq!(v, 0);
+        output_versions().remove(id);
+    }
+
+    #[test]
+    fn append_output_truncates_512k() {
+        let id = "test-trunc";
+        outputs().insert(id.to_string(), Vec::new());
+        output_versions().insert(id.to_string(), 0);
+        let big = vec![b'x'; 600 * 1024];
+        append_output(id, &big);
+        let (buf, len, _) = get_output(id).unwrap();
+        assert!(len <= 512 * 1024);
+        assert_eq!(buf.len(), len);
+        cleanup_state(id);
+    }
 }
